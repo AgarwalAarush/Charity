@@ -1,5 +1,6 @@
 -- TennisLife PWA Database Schema
 -- Supabase PostgreSQL
+-- FIXED: Addresses RLS recursion, singles matches, data integrity, and optimizations
 
 -- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -12,7 +13,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   phone TEXT,
   ntrp_rating DECIMAL(2,1),
   avatar_url TEXT,
-  availability_defaults JSONB DEFAULT '{}',
+  availability_defaults JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS roster_members (
   fair_play_score INTEGER DEFAULT 100,
   matches_played INTEGER DEFAULT 0,
   wins INTEGER DEFAULT 0,
-  availability_defaults JSONB DEFAULT '{}',
+  availability_defaults JSONB DEFAULT '{}'::jsonb,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS matches (
   warm_up_status TEXT CHECK (warm_up_status IN ('booked', 'none_yet', 'no_warmup')) DEFAULT 'none_yet',
   warm_up_time TIME,
   warm_up_court TEXT,
-  checklist_status JSONB DEFAULT '{"14d": false, "10d": false, "7d": false, "4d": false}',
+  checklist_status JSONB DEFAULT '{"14d": false, "10d": false, "7d": false, "4d": false}'::jsonb,
   match_result TEXT CHECK (match_result IN ('win', 'loss', 'tie', 'pending')) DEFAULT 'pending',
   score_summary TEXT,
   notes TEXT,
@@ -116,7 +117,7 @@ CREATE TABLE IF NOT EXISTS checklist_templates (
     {"days": 10, "task": "Email opponent captain", "completed": false},
     {"days": 7, "task": "Book warm-up court", "completed": false},
     {"days": 4, "task": "Post lineup", "completed": false}
-  ]',
+  ]'::jsonb,
   is_default BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -199,8 +200,10 @@ CREATE TABLE IF NOT EXISTS pair_statistics (
 -- Indexes for performance
 CREATE INDEX idx_roster_members_team ON roster_members(team_id);
 CREATE INDEX idx_roster_members_user ON roster_members(user_id);
+CREATE INDEX idx_roster_members_email ON roster_members(email); -- OPTIMIZATION: For invite lookups
 CREATE INDEX idx_matches_team ON matches(team_id);
 CREATE INDEX idx_matches_date ON matches(date);
+CREATE INDEX idx_matches_team_date ON matches(team_id, date); -- OPTIMIZATION: Composite index for team+date queries
 CREATE INDEX idx_availability_match ON availability(match_id);
 CREATE INDEX idx_availability_member ON availability(roster_member_id);
 CREATE INDEX idx_lineups_match ON lineups(match_id);
@@ -220,63 +223,79 @@ ALTER TABLE court_reservations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE match_scores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pair_statistics ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies
+-- ============================================================================
+-- SECURITY DEFINER HELPER FUNCTIONS (FIX #1: Prevent RLS Recursion)
+-- ============================================================================
+
+-- Helper function to check team membership without triggering RLS recursion
+-- SECURITY DEFINER means this function runs with the privileges of the creator (admin),
+-- bypassing the RLS on the tables it queries.
+CREATE OR REPLACE FUNCTION is_team_member(_team_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM roster_members
+    WHERE team_id = _team_id
+    AND user_id = auth.uid()
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Helper function to check if user is a team captain
+CREATE OR REPLACE FUNCTION is_team_captain(_team_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM teams
+    WHERE id = _team_id
+    AND (captain_id = auth.uid() OR co_captain_id = auth.uid())
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- RLS POLICIES (FIXED: Using helper functions to avoid recursion)
+-- ============================================================================
 
 -- Profiles: Users can read all profiles, update their own
 CREATE POLICY "Profiles are viewable by everyone" ON profiles FOR SELECT USING (true);
 CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
 CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
--- Teams: Members can view teams they belong to
+-- Teams: Members can view teams they belong to (FIXED)
 CREATE POLICY "Team members can view team" ON teams FOR SELECT
   USING (
     captain_id = auth.uid() OR
     co_captain_id = auth.uid() OR
-    EXISTS (SELECT 1 FROM roster_members WHERE team_id = teams.id AND user_id = auth.uid())
+    is_team_member(id) -- Uses the helper function to avoid recursion
   );
+
 CREATE POLICY "Captains can update team" ON teams FOR UPDATE
   USING (captain_id = auth.uid() OR co_captain_id = auth.uid());
+
 CREATE POLICY "Users can create teams" ON teams FOR INSERT WITH CHECK (captain_id = auth.uid());
+
 CREATE POLICY "Captains can delete team" ON teams FOR DELETE
   USING (captain_id = auth.uid());
 
--- Roster members: Team members can view roster
+-- Roster members: Team members can view roster (FIXED)
 CREATE POLICY "Team members can view roster" ON roster_members FOR SELECT
   USING (
-    EXISTS (
-      SELECT 1 FROM teams
-      WHERE teams.id = roster_members.team_id
-      AND (teams.captain_id = auth.uid() OR teams.co_captain_id = auth.uid() OR
-           EXISTS (SELECT 1 FROM roster_members rm WHERE rm.team_id = teams.id AND rm.user_id = auth.uid()))
-    )
-  );
-CREATE POLICY "Captains can manage roster" ON roster_members FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM teams
-      WHERE teams.id = roster_members.team_id
-      AND (teams.captain_id = auth.uid() OR teams.co_captain_id = auth.uid())
-    )
+    is_team_captain(team_id) OR
+    is_team_member(team_id)
   );
 
--- Matches: Team members can view matches
+CREATE POLICY "Captains can manage roster" ON roster_members FOR ALL
+  USING ( is_team_captain(team_id) );
+
+-- Matches: Team members can view matches (FIXED)
 CREATE POLICY "Team members can view matches" ON matches FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM teams
-      WHERE teams.id = matches.team_id
-      AND (teams.captain_id = auth.uid() OR teams.co_captain_id = auth.uid() OR
-           EXISTS (SELECT 1 FROM roster_members rm WHERE rm.team_id = teams.id AND rm.user_id = auth.uid()))
-    )
-  );
+  USING ( is_team_captain(team_id) OR is_team_member(team_id) );
+
 CREATE POLICY "Captains can manage matches" ON matches FOR ALL
-  USING (
-    EXISTS (
-      SELECT 1 FROM teams
-      WHERE teams.id = matches.team_id
-      AND (teams.captain_id = auth.uid() OR teams.co_captain_id = auth.uid())
-    )
-  );
+  USING ( is_team_captain(team_id) );
 
 -- Availability: Members can manage their own availability
 CREATE POLICY "Members can view availability" ON availability FOR SELECT
@@ -289,6 +308,7 @@ CREATE POLICY "Members can view availability" ON availability FOR SELECT
       AND (t.captain_id = auth.uid() OR t.co_captain_id = auth.uid() OR rm.user_id = auth.uid())
     )
   );
+
 CREATE POLICY "Members can update own availability" ON availability FOR ALL
   USING (
     EXISTS (
@@ -297,24 +317,22 @@ CREATE POLICY "Members can update own availability" ON availability FOR ALL
     )
   );
 
--- Lineups: Team members can view, captains can manage
+-- Lineups: Team members can view, captains can manage (FIXED)
 CREATE POLICY "Team members can view lineups" ON lineups FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM matches m
-      JOIN teams t ON t.id = m.team_id
       WHERE m.id = lineups.match_id
-      AND (t.captain_id = auth.uid() OR t.co_captain_id = auth.uid() OR
-           EXISTS (SELECT 1 FROM roster_members rm WHERE rm.team_id = t.id AND rm.user_id = auth.uid()))
+      AND (is_team_captain(m.team_id) OR is_team_member(m.team_id))
     )
   );
+
 CREATE POLICY "Captains can manage lineups" ON lineups FOR ALL
   USING (
     EXISTS (
       SELECT 1 FROM matches m
-      JOIN teams t ON t.id = m.team_id
       WHERE m.id = lineups.match_id
-      AND (t.captain_id = auth.uid() OR t.co_captain_id = auth.uid())
+      AND is_team_captain(m.team_id)
     )
   );
 
@@ -322,7 +340,9 @@ CREATE POLICY "Captains can manage lineups" ON lineups FOR ALL
 CREATE POLICY "Users can manage own reservations" ON court_reservations FOR ALL
   USING (user_id = auth.uid());
 
--- Functions
+-- ============================================================================
+-- FUNCTIONS AND TRIGGERS
+-- ============================================================================
 
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -333,7 +353,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Apply triggers
+-- Apply updated_at triggers
 CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_teams_updated_at BEFORE UPDATE ON teams
@@ -347,15 +367,44 @@ CREATE TRIGGER update_availability_updated_at BEFORE UPDATE ON availability
 CREATE TRIGGER update_lineups_updated_at BEFORE UPDATE ON lineups
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Function to calculate combined rating for lineup
+-- ============================================================================
+-- FIX #2: Calculate lineup rating (handles Singles matches with NULL player2_id)
+-- ============================================================================
 CREATE OR REPLACE FUNCTION calculate_lineup_rating()
 RETURNS TRIGGER AS $$
+DECLARE
+  p1_rating DECIMAL;
+  p2_rating DECIMAL;
 BEGIN
-  SELECT
-    COALESCE(p1.ntrp_rating, 0) + COALESCE(p2.ntrp_rating, 0)
-  INTO NEW.combined_rating
-  FROM roster_members p1, roster_members p2
-  WHERE p1.id = NEW.player1_id AND p2.id = NEW.player2_id;
+  -- Get Player 1 Rating
+  IF NEW.player1_id IS NOT NULL THEN
+    SELECT ntrp_rating INTO p1_rating
+    FROM profiles
+    WHERE id = (SELECT user_id FROM roster_members WHERE id = NEW.player1_id);
+
+    -- Fallback if profile doesn't exist, check roster snapshot
+    IF p1_rating IS NULL THEN
+      SELECT ntrp_rating INTO p1_rating FROM roster_members WHERE id = NEW.player1_id;
+    END IF;
+  ELSE
+    p1_rating := 0;
+  END IF;
+
+  -- Get Player 2 Rating (Handle NULL for Singles)
+  IF NEW.player2_id IS NOT NULL THEN
+    SELECT ntrp_rating INTO p2_rating
+    FROM profiles
+    WHERE id = (SELECT user_id FROM roster_members WHERE id = NEW.player2_id);
+
+    IF p2_rating IS NULL THEN
+      SELECT ntrp_rating INTO p2_rating FROM roster_members WHERE id = NEW.player2_id;
+    END IF;
+  ELSE
+    p2_rating := 0;
+  END IF;
+
+  -- Sum them up (COALESCE handles any remaining NULLs)
+  NEW.combined_rating := COALESCE(p1_rating, 0) + COALESCE(p2_rating, 0);
 
   RETURN NEW;
 END;
@@ -364,10 +413,38 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER calculate_lineup_rating_trigger
   BEFORE INSERT OR UPDATE ON lineups
   FOR EACH ROW
-  WHEN (NEW.player1_id IS NOT NULL AND NEW.player2_id IS NOT NULL)
+  WHEN (NEW.player1_id IS NOT NULL) -- Only requires player1 (singles or doubles)
   EXECUTE FUNCTION calculate_lineup_rating();
 
+-- ============================================================================
+-- FIX #3: Data Integrity - Ensure roster email matches user email
+-- ============================================================================
+CREATE OR REPLACE FUNCTION validate_roster_email_on_user_link()
+RETURNS TRIGGER AS $$
+DECLARE
+  user_email TEXT;
+BEGIN
+  -- When user_id is being added to a roster_member, verify email matches
+  IF NEW.user_id IS NOT NULL AND OLD.user_id IS NULL THEN
+    SELECT email INTO user_email FROM auth.users WHERE id = NEW.user_id;
+
+    IF user_email IS NOT NULL AND NEW.email IS NOT NULL AND user_email != NEW.email THEN
+      RAISE EXCEPTION 'Email mismatch: user email (%) does not match roster email (%)', user_email, NEW.email;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER validate_roster_email_trigger
+  BEFORE UPDATE ON roster_members
+  FOR EACH ROW
+  EXECUTE FUNCTION validate_roster_email_on_user_link();
+
+-- ============================================================================
 -- Function to create profile on user signup
+-- ============================================================================
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -381,7 +458,9 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
+-- ============================================================================
 -- Enable realtime for specific tables
+-- ============================================================================
 ALTER PUBLICATION supabase_realtime ADD TABLE matches;
 ALTER PUBLICATION supabase_realtime ADD TABLE availability;
 ALTER PUBLICATION supabase_realtime ADD TABLE lineups;
