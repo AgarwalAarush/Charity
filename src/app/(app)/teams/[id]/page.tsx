@@ -31,6 +31,8 @@ export default function TeamDetailPage() {
   const [loading, setLoading] = useState(true)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [teamConversationId, setTeamConversationId] = useState<string | null>(null)
+  const [pendingInvitesCount, setPendingInvitesCount] = useState(0)
+  const [isCaptain, setIsCaptain] = useState(false)
 
   useEffect(() => {
     loadTeamData()
@@ -38,6 +40,7 @@ export default function TeamDetailPage() {
 
   async function loadTeamData() {
     const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
 
     const { data: teamData } = await supabase
       .from('teams')
@@ -47,6 +50,20 @@ export default function TeamDetailPage() {
 
     if (teamData) {
       setTeam(teamData)
+      
+      // Check if current user is captain
+      if (user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+        setIsCaptain(true)
+        
+        // Load pending invitations count for captains
+        const { count } = await supabase
+          .from('team_invitations')
+          .select('*', { count: 'exact', head: true })
+          .eq('team_id', teamId)
+          .eq('status', 'pending')
+        
+        setPendingInvitesCount(count || 0)
+      }
     }
 
     const today = new Date().toISOString().split('T')[0]
@@ -116,11 +133,16 @@ export default function TeamDetailPage() {
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
-              <div>
+              <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
                   <Badge>{team.league_format}</Badge>
                   {team.season && (
                     <span className="text-sm text-muted-foreground">{team.season}</span>
+                  )}
+                  {isCaptain && pendingInvitesCount > 0 && (
+                    <Badge variant="default" className="text-xs">
+                      {pendingInvitesCount} pending invite{pendingInvitesCount !== 1 ? 's' : ''}
+                    </Badge>
                   )}
                 </div>
                 {team.rating_limit && (

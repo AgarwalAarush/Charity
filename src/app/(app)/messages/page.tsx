@@ -10,7 +10,8 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { createClient } from '@/lib/supabase/client'
 import { Team, Profile } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
-import { Users, MessageCircle, ChevronRight } from 'lucide-react'
+import { Users, MessageCircle, ChevronRight, Mail, Check, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface Conversation {
   id: string
@@ -33,11 +34,27 @@ interface DMConversation extends Conversation {
   has_unread?: boolean
 }
 
+interface TeamInvitation {
+  id: string
+  team_id: string
+  inviter_id: string
+  invitee_id: string
+  invitee_email: string
+  status: string
+  message: string | null
+  created_at: string
+  team?: Team
+  inviter?: Profile
+}
+
 export default function MessagesPage() {
   const [teamConversations, setTeamConversations] = useState<TeamConversation[]>([])
   const [dmConversations, setDMConversations] = useState<DMConversation[]>([])
+  const [invitations, setInvitations] = useState<TeamInvitation[]>([])
   const [loading, setLoading] = useState(true)
+  const [respondingToInvite, setRespondingToInvite] = useState<string | null>(null)
   const router = useRouter()
+  const { toast } = useToast()
 
   useEffect(() => {
     loadConversations()
@@ -50,6 +67,23 @@ export default function MessagesPage() {
     if (!user) {
       router.push('/auth/login')
       return
+    }
+
+    // Load pending team invitations
+    const { data: invites } = await supabase
+      .from('team_invitations')
+      .select('*, teams(*), inviter:profiles!team_invitations_inviter_id_fkey(*)')
+      .eq('invitee_id', user.id)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+
+    if (invites) {
+      const invitationsWithData = invites.map(invite => ({
+        ...invite,
+        team: invite.teams,
+        inviter: invite.inviter,
+      }))
+      setInvitations(invitationsWithData as any)
     }
 
     // Get teams the user belongs to
@@ -190,11 +224,98 @@ export default function MessagesPage() {
     )
   }
 
+  async function respondToInvitation(invitationId: string, accept: boolean) {
+    setRespondingToInvite(invitationId)
+    const supabase = createClient()
+
+    const { error } = await supabase
+      .from('team_invitations')
+      .update({
+        status: accept ? 'accepted' : 'declined',
+        responded_at: new Date().toISOString(),
+      })
+      .eq('id', invitationId)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: accept ? 'Invitation accepted!' : 'Invitation declined',
+        description: accept 
+          ? 'You have been added to the team roster' 
+          : 'The invitation has been declined',
+      })
+      // Reload to update lists
+      loadConversations()
+    }
+
+    setRespondingToInvite(null)
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header title="Messages" />
 
       <main className="flex-1 p-4 space-y-6">
+        {/* Team Invitations */}
+        {invitations.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+              Team Invitations
+            </h2>
+            <div className="space-y-2">
+              {invitations.map((invite) => (
+                <Card key={invite.id} className="border-primary/50">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-primary/10 rounded-full p-2">
+                        <Mail className="h-5 w-5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium">{invite.team?.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {invite.team?.league_format}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          Invited by {invite.inviter?.full_name || invite.inviter?.email}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(invite.created_at, 'MMM d')} at {formatTime(invite.created_at)}
+                        </p>
+                        <div className="flex gap-2 mt-3">
+                          <Button
+                            size="sm"
+                            onClick={() => respondToInvitation(invite.id, true)}
+                            disabled={respondingToInvite === invite.id}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Accept
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => respondToInvitation(invite.id, false)}
+                            disabled={respondingToInvite === invite.id}
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            Decline
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Team Chats */}
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">

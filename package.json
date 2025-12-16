@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "db:push": "supabase db push",
-    "db:generate": "supabase gen types typescript --local > src/types/database.types.ts"
+    "db:generate": "supabase gen types typescript --local > src/types/database.types.ts",
+    "db:generate:remote": "supabase gen types typescript --project-id dirxtzhfmikbrjwtmnsl > src/types/database.types.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
