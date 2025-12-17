@@ -82,7 +82,12 @@ export function parseCSVSchedule(csvText: string): Array<{
   time: string
   opponent: string
   venue?: string
+  venueAddress?: string
   isHome?: boolean
+  duration?: number
+  warmupStatus?: string
+  warmupTime?: string
+  warmupCourt?: string
 }> {
   const lines = csvText.trim().split('\n')
   const results: Array<{
@@ -90,7 +95,12 @@ export function parseCSVSchedule(csvText: string): Array<{
     time: string
     opponent: string
     venue?: string
+    venueAddress?: string
     isHome?: boolean
+    duration?: number
+    warmupStatus?: string
+    warmupTime?: string
+    warmupCourt?: string
   }> = []
 
   // Skip header if present
@@ -102,13 +112,52 @@ export function parseCSVSchedule(csvText: string): Array<{
 
     const parts = line.split(',').map(p => p.trim())
     if (parts.length >= 3) {
-      results.push({
+      // CSV format: Date, Time, Opponent, Home/Away, Venue, Venue Address, Duration, Warmup Status, Warmup Time, Warmup Court
+      const match: any = {
         date: parts[0],
         time: parts[1],
         opponent: parts[2],
-        venue: parts[3] || undefined,
-        isHome: parts[4]?.toLowerCase() === 'home' || parts[4]?.toLowerCase() === 'true',
-      })
+      }
+
+      // Home/Away (index 3)
+      if (parts[3]) {
+        match.isHome = parts[3].toLowerCase() === 'home' || parts[3].toLowerCase() === 'true'
+      }
+
+      // Venue (index 4)
+      if (parts[4]) {
+        match.venue = parts[4]
+      }
+
+      // Venue Address (index 5)
+      if (parts[5]) {
+        match.venueAddress = parts[5]
+      }
+
+      // Duration (index 6)
+      if (parts[6] && !isNaN(parseInt(parts[6]))) {
+        match.duration = parseInt(parts[6])
+      }
+
+      // Warmup Status (index 7)
+      if (parts[7]) {
+        const status = parts[7].toLowerCase()
+        if (['booked', 'none_yet', 'no_warmup'].includes(status)) {
+          match.warmupStatus = status
+        }
+      }
+
+      // Warmup Time (index 8)
+      if (parts[8]) {
+        match.warmupTime = parts[8]
+      }
+
+      // Warmup Court (index 9)
+      if (parts[9]) {
+        match.warmupCourt = parts[9]
+      }
+
+      results.push(match)
     }
   }
 

@@ -14,13 +14,13 @@ import {
   Users,
   Calendar,
   ClipboardList,
-  Upload,
+  Plus,
   ChevronRight,
   Settings,
   ListChecks,
   MessageCircle
 } from 'lucide-react'
-import { ImportScheduleDialog } from '@/components/teams/import-schedule-dialog'
+import { AddMatchDialog } from '@/components/teams/add-match-dialog'
 
 export default function TeamDetailPage() {
   const params = useParams()
@@ -30,7 +30,7 @@ export default function TeamDetailPage() {
   const [matches, setMatches] = useState<Match[]>([])
   const [rosterCount, setRosterCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [showImportDialog, setShowImportDialog] = useState(false)
+  const [showAddMatchDialog, setShowAddMatchDialog] = useState(false)
   const [teamConversationId, setTeamConversationId] = useState<string | null>(null)
   const [pendingInvitesCount, setPendingInvitesCount] = useState(0)
   const [isCaptain, setIsCaptain] = useState(false)
@@ -204,12 +204,12 @@ export default function TeamDetailPage() {
           )}
           <Card
             className="hover:bg-accent/50 transition-colors cursor-pointer"
-            onClick={() => setShowImportDialog(true)}
+            onClick={() => setShowAddMatchDialog(true)}
           >
             <CardContent className="p-4 flex flex-col items-center justify-center text-center">
-              <Upload className="h-6 w-6 mb-2 text-primary" />
-              <span className="text-sm font-medium">Import</span>
-              <span className="text-xs text-muted-foreground">Schedule</span>
+              <Plus className="h-6 w-6 mb-2 text-primary" />
+              <span className="text-sm font-medium">Add Match</span>
+              <span className="text-xs text-muted-foreground">Single or CSV</span>
             </CardContent>
           </Card>
         </div>
@@ -232,8 +232,8 @@ export default function TeamDetailPage() {
               <CardContent className="py-6 text-center">
                 <Calendar className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground mb-3">No matches scheduled</p>
-                <Button size="sm" onClick={() => setShowImportDialog(true)}>
-                  Import Schedule
+                <Button size="sm" onClick={() => setShowAddMatchDialog(true)}>
+                  Add Match
                 </Button>
               </CardContent>
             </Card>
@@ -303,12 +303,12 @@ export default function TeamDetailPage() {
         </div>
       </main>
 
-      <ImportScheduleDialog
-        open={showImportDialog}
-        onOpenChange={setShowImportDialog}
+      <AddMatchDialog
+        open={showAddMatchDialog}
+        onOpenChange={setShowAddMatchDialog}
         teamId={teamId}
-        onImported={() => {
-          setShowImportDialog(false)
+        onAdded={() => {
+          setShowAddMatchDialog(false)
           loadTeamData()
         }}
       />

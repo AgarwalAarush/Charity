@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS matches (
   warm_up_status TEXT CHECK (warm_up_status IN ('booked', 'none_yet', 'no_warmup')) DEFAULT 'none_yet',
   warm_up_time TIME,
   warm_up_court TEXT,
+  duration INTEGER,
   checklist_status JSONB DEFAULT '{"14d": false, "10d": false, "7d": false, "4d": false}'::jsonb,
   match_result TEXT CHECK (match_result IN ('win', 'loss', 'tie', 'pending')) DEFAULT 'pending',
   score_summary TEXT,
