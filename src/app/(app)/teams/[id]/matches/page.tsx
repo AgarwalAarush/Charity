@@ -24,11 +24,46 @@ export default function MatchesPage() {
   async function loadMatches() {
     const supabase = createClient()
 
-    const { data } = await supabase
+    // Get current user info
+    const { data: { user } } = await supabase.auth.getUser()
+    console.log('=== MATCHES DEBUG ===')
+    console.log('1. Current user:', user?.id)
+    console.log('2. Loading matches for team:', teamId)
+
+    // Check roster membership for this team
+    const { data: rosterCheck } = await supabase
+      .from('roster_members')
+      .select('*')
+      .eq('user_id', user?.id)
+      .eq('team_id', teamId)
+    console.log('3. Roster membership for this team:', rosterCheck)
+
+    // Check all roster memberships
+    const { data: allRoster } = await supabase
+      .from('roster_members')
+      .select('team_id, role')
+      .eq('user_id', user?.id)
+    console.log('4. All your roster memberships:', allRoster)
+
+    // Try to load matches
+    const { data, error } = await supabase
       .from('matches')
       .select('*')
       .eq('team_id', teamId)
       .order('date', { ascending: true })
+
+    console.log('5. Matches query result:', { data, error, count: data?.length })
+
+    // Try loading ALL matches you can see (without team filter)
+    const { data: allYourMatches } = await supabase
+      .from('matches')
+      .select('team_id, opponent_name, date')
+      .limit(20)
+    console.log('6. ALL matches you can see (any team):', allYourMatches)
+
+    if (error) {
+      console.error('Error loading matches:', error)
+    }
 
     if (data) {
       setMatches(data)

@@ -61,6 +61,36 @@ export function ImportScheduleDialog({
 
       const supabase = createClient()
 
+      // Verify user has permission to add matches
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        toast({
+          title: 'Error',
+          description: 'You must be logged in',
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+
+      const { data: teamData } = await supabase
+        .from('teams')
+        .select('captain_id, co_captain_id')
+        .eq('id', teamId)
+        .single()
+
+      console.log('Team data:', teamData, 'Current user:', user.id)
+      
+      if (!teamData || (teamData.captain_id !== user.id && teamData.co_captain_id !== user.id)) {
+        toast({
+          title: 'Permission denied',
+          description: 'Only team captains can import schedules',
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+
       const matchesToInsert = parsedSchedule.map((match) => ({
         team_id: teamId,
         date: match.date,
@@ -70,18 +100,36 @@ export function ImportScheduleDialog({
         is_home: match.isHome ?? true,
       }))
 
-      const { error } = await supabase.from('matches').insert(matchesToInsert)
+      console.log('=== IMPORT DEBUG ===')
+      console.log('1. Team ID for import:', teamId)
+      console.log('2. Matches to insert:', matchesToInsert)
+
+      const { data, error } = await supabase
+        .from('matches')
+        .insert(matchesToInsert)
+        .select()
+
+      console.log('3. Insert result:', { data, error })
+      
+      // Verify matches were actually created for this team
+      const { data: verifyMatches } = await supabase
+        .from('matches')
+        .select('id, team_id, opponent_name')
+        .eq('team_id', teamId)
+      console.log('4. Matches now in DB for this team:', verifyMatches)
 
       if (error) {
+        console.error('Insert error:', error)
         toast({
           title: 'Error',
           description: error.message,
           variant: 'destructive',
         })
       } else {
+        console.log(`Successfully inserted ${data?.length || parsedSchedule.length} matches`)
         toast({
           title: 'Schedule imported',
-          description: `${parsedSchedule.length} matches have been added`,
+          description: `${data?.length || parsedSchedule.length} matches have been added`,
         })
         setCsvText('')
         onImported()

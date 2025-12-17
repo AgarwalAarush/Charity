@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ import { ImportScheduleDialog } from '@/components/teams/import-schedule-dialog'
 
 export default function TeamDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const teamId = params.id as string
   const [team, setTeam] = useState<Team | null>(null)
   const [matches, setMatches] = useState<Match[]>([])
@@ -67,13 +68,32 @@ export default function TeamDetailPage() {
     }
 
     const today = new Date().toISOString().split('T')[0]
-    const { data: matchData } = await supabase
+    console.log('=== TEAM DETAIL MATCHES DEBUG ===')
+    console.log('1. Today date for filtering:', today)
+    console.log('2. Loading matches for team:', teamId, 'user:', user?.id)
+    
+    // First, get ALL matches for this team (no date filter)
+    const { data: allTeamMatches } = await supabase
+      .from('matches')
+      .select('id, date, opponent_name')
+      .eq('team_id', teamId)
+      .order('date', { ascending: true })
+    console.log('3. ALL matches for this team (no date filter):', allTeamMatches)
+    
+    // Now get only upcoming matches
+    const { data: matchData, error: matchError } = await supabase
       .from('matches')
       .select('*')
       .eq('team_id', teamId)
       .gte('date', today)
       .order('date', { ascending: true })
       .limit(5)
+
+    console.log('4. Upcoming matches (date >= today):', { matchData, matchError, count: matchData?.length })
+
+    if (matchError) {
+      console.error('Error loading matches on team detail:', matchError)
+    }
 
     if (matchData) {
       setMatches(matchData)
@@ -220,36 +240,43 @@ export default function TeamDetailPage() {
           ) : (
             <div className="space-y-2">
               {matches.map((match) => (
-                <Link key={match.id} href={`/teams/${teamId}/matches/${match.id}`}>
-                  <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
-                    <CardContent className="p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-medium text-sm">
-                              vs {match.opponent_name}
-                            </span>
-                            <Badge variant={match.is_home ? 'default' : 'outline'} className="text-xs">
-                              {match.is_home ? 'Home' : 'Away'}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDate(match.date, 'MMM d')} at {formatTime(match.time)}
-                          </p>
+                <Card 
+                  key={match.id} 
+                  className="hover:bg-accent/50 transition-colors cursor-pointer"
+                  onClick={() => router.push(`/teams/${teamId}/matches/${match.id}`)}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium text-sm">
+                            vs {match.opponent_name}
+                          </span>
+                          <Badge variant={match.is_home ? 'default' : 'outline'} className="text-xs">
+                            {match.is_home ? 'Home' : 'Away'}
+                          </Badge>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Link href={`/teams/${teamId}/matches/${match.id}/lineup`}>
-                            <Button variant="ghost" size="sm" className="text-xs">
-                              <ClipboardList className="h-4 w-4 mr-1" />
-                              Lineup
-                            </Button>
-                          </Link>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(match.date, 'MMM d')} at {formatTime(match.time)}
+                        </p>
                       </div>
-                    </CardContent>
-                  </Card>
-                </Link>
+                      <div className="flex items-center gap-2">
+                        <Link href={`/teams/${teamId}/matches/${match.id}/lineup`}>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="text-xs"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ClipboardList className="h-4 w-4 mr-1" />
+                            Lineup
+                          </Button>
+                        </Link>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           )}
