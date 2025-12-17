@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bell, MessageCircle } from 'lucide-react'
+import { Bell, MessageCircle, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -15,26 +15,32 @@ interface HeaderProps {
   showNotifications?: boolean
 }
 
-interface RecentMessage {
-  id: string
+interface RecentConversation {
   conversation_id: string
-  body: string
-  created_at: string
-  sender_name: string
   conversation_kind: 'team' | 'dm'
-  team_name?: string
+  conversation_title: string
+  last_message: string
+  last_message_time: string
+  sender_name: string
   sender_initials: string
+  unread?: boolean
 }
 
 export function Header({ title, showNotifications = true }: HeaderProps) {
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<RecentMessage[]>([])
+  const [conversations, setConversations] = useState<RecentConversation[]>([])
   const [hasUnread, setHasUnread] = useState(false)
   const [loading, setLoading] = useState(false)
+  const openRef = useRef(false)
   const router = useRouter()
 
+  // Keep ref in sync with state
   useEffect(() => {
-    if (open && messages.length === 0) {
+    openRef.current = open
+  }, [open])
+
+  useEffect(() => {
+    if (open && conversations.length === 0) {
       loadRecentMessages()
     }
   }, [open])
@@ -46,16 +52,86 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    // Subscribe to new messages in realtime
+    const supabase = createClient()
+    
+    const channel = supabase
+      .channel('notifications-header')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        async (payload) => {
+          const newMessage = payload.new as any
+          
+          // Get current user to check if this message is relevant
+          const { data: { user } } = await supabase.auth.getUser()
+          if (!user) return
+          
+          // Check if message is from current user (skip own messages for notification)
+          if (newMessage.sender_id === user.id) return
+          
+          // Always update unread indicator
+          checkUnreadMessages()
+          
+          // If dropdown is open, reload messages to show new one
+          if (openRef.current) {
+            loadRecentMessages()
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
   async function checkUnreadMessages() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // Get user's teams from roster_members
+    const { data: rosterTeams, error: rosterError } = await supabase
+      .from('roster_members')
+      .select('team_id')
+      .eq('user_id', user.id)
+
+    if (rosterError) {
+      console.error('Error loading roster teams for unread check:', rosterError)
+    }
+
+    // Get teams where user is captain or co-captain
+    const { data: captainTeams, error: captainError } = await supabase
+      .from('teams')
+      .select('id')
+      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+
+    if (captainError) {
+      console.error('Error loading captain teams for unread check:', captainError)
+    }
+
+    // Combine and deduplicate team IDs
+    const rosterTeamIds = rosterTeams?.map(t => t.team_id) || []
+    const captainTeamIds = captainTeams?.map(t => t.id) || []
+    const teamIds = [...new Set([...rosterTeamIds, ...captainTeamIds])]
+
+    // Build the OR filter
+    let conversationFilter = `dm_user1.eq.${user.id},dm_user2.eq.${user.id}`
+    if (teamIds.length > 0) {
+      conversationFilter = `team_id.in.(${teamIds.join(',')}),${conversationFilter}`
+    }
+
     // Get user's conversations
     const { data: conversations } = await supabase
       .from('conversations')
       .select('id, last_message_at')
-      .or(`team_id.in.(select team_id from roster_members where user_id='${user.id}'),dm_user1.eq.${user.id},dm_user2.eq.${user.id}`)
+      .or(conversationFilter)
       .not('last_message_at', 'is', null)
 
     if (!conversations || conversations.length === 0) {
@@ -90,53 +166,83 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
       return
     }
 
-    // Get user's teams
-    const { data: teams } = await supabase
+    // Get user's teams from roster_members
+    const { data: rosterTeams, error: rosterError } = await supabase
       .from('roster_members')
       .select('team_id')
       .eq('user_id', user.id)
 
-    const teamIds = teams?.map(t => t.team_id) || []
+    if (rosterError) {
+      console.error('Error loading roster teams:', rosterError)
+    }
 
-    // Get recent messages from team conversations and DMs
-    const { data: recentMessages } = await supabase
-      .from('messages')
-      .select(`
-        id,
-        conversation_id,
-        body,
-        created_at,
-        sender_id,
-        sender:profiles!messages_sender_id_fkey(full_name, email),
-        conversation:conversations(
-          id,
-          kind,
-          team_id,
-          dm_user1,
-          dm_user2,
-          teams(name)
-        )
-      `)
-      .order('created_at', { ascending: false })
+    // Get teams where user is captain or co-captain
+    const { data: captainTeams, error: captainError } = await supabase
+      .from('teams')
+      .select('id')
+      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+
+    if (captainError) {
+      console.error('Error loading captain teams:', captainError)
+    }
+
+    // Combine and deduplicate team IDs
+    const rosterTeamIds = rosterTeams?.map(t => t.team_id) || []
+    const captainTeamIds = captainTeams?.map(t => t.id) || []
+    const teamIds = [...new Set([...rosterTeamIds, ...captainTeamIds])]
+
+    // Build the OR filter for conversations
+    let conversationFilter = `dm_user1.eq.${user.id},dm_user2.eq.${user.id}`
+    if (teamIds.length > 0) {
+      conversationFilter = `team_id.in.(${teamIds.join(',')}),${conversationFilter}`
+    }
+
+    // Get user's conversations with last message info
+    const { data: userConversations, error: convError } = await supabase
+      .from('conversations')
+      .select('id, kind, team_id, dm_user1, dm_user2, last_message_at, teams(name)')
+      .or(conversationFilter)
+      .not('last_message_at', 'is', null)
+      .order('last_message_at', { ascending: false })
       .limit(10)
 
-    if (!recentMessages) {
+    if (convError) {
+      console.error('Error loading conversations:', convError)
+    }
+
+    if (!userConversations || userConversations.length === 0) {
+      setConversations([])
       setLoading(false)
       return
     }
 
-    // Filter to only show messages from accessible conversations
-    const processedMessages: RecentMessage[] = []
-    
-    for (const msg of recentMessages) {
-      const conv = msg.conversation as any
-      if (!conv) continue
+    // Get read status for unread indicator
+    const { data: reads } = await supabase
+      .from('conversation_reads')
+      .select('conversation_id, last_read_at')
+      .eq('user_id', user.id)
 
-      // Check if user has access to this conversation
-      if (conv.kind === 'team' && !teamIds.includes(conv.team_id)) continue
-      if (conv.kind === 'dm' && conv.dm_user1 !== user.id && conv.dm_user2 !== user.id) continue
+    const readMap = new Map(reads?.map(r => [r.conversation_id, r.last_read_at]) || [])
 
-      const sender = msg.sender as any
+    // For each conversation, get the most recent message
+    const conversationPromises = userConversations.map(async (conv) => {
+      // Get the most recent message
+      const { data: lastMessage } = await supabase
+        .from('messages')
+        .select(`
+          body,
+          created_at,
+          sender_id,
+          sender:profiles!messages_sender_id_fkey(full_name, email)
+        `)
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (!lastMessage) return null
+
+      const sender = lastMessage.sender as any
       const senderName = sender?.full_name || sender?.email || 'Unknown'
       const initials = senderName
         .split(' ')
@@ -145,23 +251,45 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
         .toUpperCase()
         .slice(0, 2)
 
-      processedMessages.push({
-        id: msg.id,
-        conversation_id: msg.conversation_id,
-        body: msg.body,
-        created_at: msg.created_at,
-        sender_name: senderName,
-        conversation_kind: conv.kind,
-        team_name: conv.kind === 'team' ? conv.teams?.name : undefined,
-        sender_initials: initials
-      })
-    }
+      // Determine conversation title
+      let conversationTitle = ''
+      if (conv.kind === 'team') {
+        conversationTitle = (conv as any).teams?.name || 'Team Chat'
+      } else {
+        // For DM, get the other user's name
+        const otherUserId = conv.dm_user1 === user.id ? conv.dm_user2 : conv.dm_user1
+        const { data: otherUser } = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', otherUserId)
+          .single()
+        
+        conversationTitle = otherUser?.full_name || otherUser?.email || 'Direct Message'
+      }
 
-    setMessages(processedMessages)
+      // Check if unread
+      const lastRead = readMap.get(conv.id) || '1970-01-01'
+      const isUnread = conv.last_message_at && conv.last_message_at > lastRead
+
+      return {
+        conversation_id: conv.id,
+        conversation_kind: conv.kind,
+        conversation_title: conversationTitle,
+        last_message: lastMessage.body,
+        last_message_time: lastMessage.created_at,
+        sender_name: senderName,
+        sender_initials: initials,
+        unread: isUnread
+      }
+    })
+
+    const processedConversations = (await Promise.all(conversationPromises)).filter(Boolean) as RecentConversation[]
+
+    setConversations(processedConversations)
     setLoading(false)
   }
 
-  function handleMessageClick(conversationId: string) {
+  function handleConversationClick(conversationId: string) {
     setOpen(false)
     router.push(`/messages/${conversationId}`)
   }
@@ -200,43 +328,46 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
                   <div className="flex items-center justify-center py-8">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
                   </div>
-                ) : messages.length === 0 ? (
+                ) : conversations.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 text-center px-4">
                     <MessageCircle className="h-8 w-8 text-muted-foreground mb-2" />
                     <p className="text-sm text-muted-foreground">No recent messages</p>
                   </div>
                 ) : (
                   <div className="divide-y">
-                    {messages.map((message) => (
+                    {conversations.map((conv) => (
                       <div
-                        key={message.id}
+                        key={conv.conversation_id}
                         className="p-3 hover:bg-accent cursor-pointer transition-colors"
-                        onClick={() => handleMessageClick(message.conversation_id)}
+                        onClick={() => handleConversationClick(conv.conversation_id)}
                       >
                         <div className="flex gap-3">
-                          <Avatar className="h-8 w-8 shrink-0">
+                          <Avatar className="h-10 w-10 shrink-0">
                             <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                              {message.sender_initials}
+                              {conv.conversation_kind === 'team' ? (
+                                <Users className="h-5 w-5" />
+                              ) : (
+                                conv.sender_initials
+                              )}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-baseline justify-between gap-2 mb-1">
-                              <p className="text-sm font-medium truncate">
-                                {message.sender_name}
+                              <p className={`text-sm truncate ${conv.unread ? 'font-semibold' : 'font-medium'}`}>
+                                {conv.conversation_title}
                               </p>
                               <span className="text-xs text-muted-foreground shrink-0">
-                                {formatDistanceToNow(new Date(message.created_at), { addSuffix: true })}
+                                {formatDistanceToNow(new Date(conv.last_message_time), { addSuffix: true })}
                               </span>
                             </div>
-                            {message.team_name && (
-                              <p className="text-xs text-muted-foreground mb-1">
-                                {message.team_name}
-                              </p>
-                            )}
-                            <p className="text-sm text-muted-foreground line-clamp-2">
-                              {message.body}
+                            <p className={`text-sm line-clamp-2 ${conv.unread ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                              <span className="text-muted-foreground font-normal">{conv.sender_name}: </span>
+                              {conv.last_message}
                             </p>
                           </div>
+                          {conv.unread && (
+                            <div className="h-2 w-2 rounded-full bg-primary shrink-0 mt-2" />
+                          )}
                         </div>
                       </div>
                     ))}
