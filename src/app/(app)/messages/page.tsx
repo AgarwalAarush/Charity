@@ -12,6 +12,7 @@ import { Team, Profile } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { Users, MessageCircle, ChevronRight, Mail, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
 
 interface Conversation {
   id: string

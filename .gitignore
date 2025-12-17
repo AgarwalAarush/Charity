@@ -47,3 +47,6 @@ Thumbs.db
 
 # Supabase
 .supabase
+
+# SQL files
+*.sql

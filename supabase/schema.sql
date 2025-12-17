@@ -770,6 +770,53 @@ CREATE TRIGGER handle_invitation_acceptance_trigger
   EXECUTE FUNCTION handle_invitation_acceptance();
 
 -- ============================================================================
+-- Team captain roster trigger
+-- ============================================================================
+
+-- Automatically add team captain to roster_members when a team is created
+CREATE OR REPLACE FUNCTION add_captain_to_roster()
+RETURNS TRIGGER AS $$
+DECLARE
+  captain_profile profiles%ROWTYPE;
+BEGIN
+  -- Get captain's profile information
+  SELECT * INTO captain_profile FROM profiles WHERE id = NEW.captain_id;
+  
+  -- Only add captain to roster if captain_id is set and captain profile exists
+  IF NEW.captain_id IS NOT NULL AND captain_profile.id IS NOT NULL THEN
+    -- Insert captain as a roster member with 'captain' role
+    INSERT INTO roster_members (
+      team_id,
+      user_id,
+      email,
+      full_name,
+      phone,
+      ntrp_rating,
+      role,
+      is_active
+    ) VALUES (
+      NEW.id,
+      NEW.captain_id,
+      captain_profile.email,
+      COALESCE(captain_profile.full_name, captain_profile.email),
+      captain_profile.phone,
+      captain_profile.ntrp_rating,
+      'captain',
+      true
+    )
+    ON CONFLICT (team_id, email) DO NOTHING; -- Prevent duplicates if captain already exists
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER add_captain_to_roster_trigger
+  AFTER INSERT ON teams
+  FOR EACH ROW
+  EXECUTE FUNCTION add_captain_to_roster();
+
+-- ============================================================================
 -- Enable realtime for specific tables
 -- ============================================================================
 ALTER PUBLICATION supabase_realtime ADD TABLE matches;
