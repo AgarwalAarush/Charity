@@ -7,6 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { formatDate, formatTime } from '@/lib/utils'
+import { calculateMatchAvailability } from '@/lib/availability-utils'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { useToast } from '@/hooks/use-toast'
 import {
   Calendar,
   MapPin,
@@ -15,7 +24,10 @@ import {
   Clock,
   MinusCircle,
   Trophy,
-  ChevronRight
+  ChevronRight,
+  Check,
+  X,
+  HelpCircle
 } from 'lucide-react'
 
 interface UpcomingMatch {
@@ -29,6 +41,9 @@ interface UpcomingMatch {
   status: 'in_lineup' | 'off' | 'pending'
   partner_name?: string
   court_slot?: number
+  availability?: {
+    status: string
+  }
 }
 
 interface Team {
@@ -43,6 +58,8 @@ export default function HomePage() {
   const [upcomingMatches, setUpcomingMatches] = useState<UpcomingMatch[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
+  const [rosterMemberMap, setRosterMemberMap] = useState<Record<string, string>>({}) // matchId -> rosterMemberId
+  const { toast } = useToast()
 
   useEffect(() => {
     loadDashboardData()
@@ -96,6 +113,12 @@ export default function HomePage() {
 
     const teamIds = memberships.map(m => m.team_id)
     const rosterMemberIds = memberships.map(m => m.id)
+    
+    // Build roster member map by team
+    const rosterMap: Record<string, string> = {}
+    memberships.forEach(m => {
+      rosterMap[m.team_id] = m.id
+    })
 
     // Get upcoming matches for user's teams
     const today = new Date().toISOString().split('T')[0]
@@ -153,6 +176,23 @@ export default function HomePage() {
       .in('match_id', matchIds)
       .in('roster_member_id', rosterMemberIds)
 
+    // Load user's default availability for auto-calculation
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('availability_defaults')
+      .eq('id', user.id)
+      .single()
+
+    // Build match to roster member mapping
+    const matchRosterMap: Record<string, string> = {}
+    matches.forEach(match => {
+      const rosterId = rosterMap[match.team_id]
+      if (rosterId) {
+        matchRosterMap[match.id] = rosterId
+      }
+    })
+    setRosterMemberMap(matchRosterMap)
+    
     // Process matches with status
     const processedMatches: UpcomingMatch[] = matches.map(match => {
       const membership = memberships.find(m => m.team_id === match.team_id)
@@ -165,9 +205,19 @@ export default function HomePage() {
       )
 
       // Check availability response
-      const availability = availabilities?.find(a =>
+      let availability = availabilities?.find(a =>
         a.match_id === match.id && a.roster_member_id === memberRosterId
       )
+      
+      // If no availability set, auto-calculate from defaults
+      if (!availability && profile?.availability_defaults) {
+        const autoStatus = calculateMatchAvailability(
+          match.date,
+          match.time,
+          profile.availability_defaults as Record<string, string[]>
+        )
+        availability = { status: autoStatus } as any
+      }
 
       let status: 'in_lineup' | 'off' | 'pending' = 'pending'
       let partnerName: string | undefined
@@ -199,6 +249,9 @@ export default function HomePage() {
         status,
         partner_name: partnerName,
         court_slot: courtSlot,
+        availability: availability ? {
+          status: availability.status
+        } : undefined
       }
     })
 
@@ -228,6 +281,79 @@ export default function HomePage() {
         return 'Off'
       case 'pending':
         return 'Pending'
+    }
+  }
+
+  const getAvailabilityIcon = (status: string) => {
+    switch (status) {
+      case 'available':
+        return <Check className="h-3 w-3" />
+      case 'maybe':
+        return <HelpCircle className="h-3 w-3" />
+      case 'unavailable':
+        return <X className="h-3 w-3" />
+      default:
+        return null
+    }
+  }
+
+  async function updateMatchAvailability(matchId: string, newStatus: 'available' | 'maybe' | 'unavailable') {
+    const supabase = createClient()
+    const rosterMemberId = rosterMemberMap[matchId]
+    
+    if (!rosterMemberId) {
+      toast({
+        title: 'Error',
+        description: 'Could not find roster membership',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Check if availability exists
+    const { data: existing } = await supabase
+      .from('availability')
+      .select('id')
+      .eq('roster_member_id', rosterMemberId)
+      .eq('match_id', matchId)
+      .maybeSingle()
+
+    let error = null
+    if (existing) {
+      const result = await supabase
+        .from('availability')
+        .update({ status: newStatus })
+        .eq('id', existing.id)
+      error = result.error
+    } else {
+      const result = await supabase
+        .from('availability')
+        .insert({
+          roster_member_id: rosterMemberId,
+          match_id: matchId,
+          status: newStatus
+        })
+      error = result.error
+    }
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Updated',
+        description: `Availability set to ${newStatus}`,
+      })
+      
+      // Update local state
+      setUpcomingMatches(prev => prev.map(m => 
+        m.id === matchId 
+          ? { ...m, availability: { status: newStatus } }
+          : m
+      ))
     }
   }
 
@@ -336,11 +462,51 @@ export default function HomePage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex flex-col items-center gap-1 shrink-0">
-                        {getStatusIcon(match.status)}
-                        <span className="text-xs text-muted-foreground">
-                          {getStatusLabel(match.status)}
-                        </span>
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        <div className="flex items-center gap-1">
+                          {getStatusIcon(match.status)}
+                          <span className="text-xs text-muted-foreground">
+                            {getStatusLabel(match.status)}
+                          </span>
+                        </div>
+                        <Select
+                          value={match.availability?.status || 'unavailable'}
+                          onValueChange={(value) => updateMatchAvailability(match.id, value as 'available' | 'maybe' | 'unavailable')}
+                        >
+                          <SelectTrigger 
+                            className="h-7 text-xs w-[110px]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <SelectValue>
+                              <div className="flex items-center gap-1.5">
+                                {getAvailabilityIcon(match.availability?.status || 'unavailable')}
+                                <span className="capitalize">
+                                  {match.availability?.status || 'Unavailable'}
+                                </span>
+                              </div>
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent onClick={(e) => e.stopPropagation()}>
+                            <SelectItem value="available">
+                              <div className="flex items-center gap-2">
+                                <Check className="h-3 w-3 text-green-500" />
+                                <span>Available</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="maybe">
+                              <div className="flex items-center gap-2">
+                                <HelpCircle className="h-3 w-3 text-yellow-500" />
+                                <span>Maybe</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="unavailable">
+                              <div className="flex items-center gap-2">
+                                <X className="h-3 w-3 text-red-500" />
+                                <span>Unavailable</span>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                   </CardContent>

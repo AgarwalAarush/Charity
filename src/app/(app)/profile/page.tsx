@@ -20,8 +20,11 @@ import {
   Calendar,
   MapPin,
   Plus,
-  Loader2
+  Loader2,
+  ChevronRight,
+  Clock
 } from 'lucide-react'
+import Link from 'next/link'
 
 const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -211,27 +214,24 @@ export default function ProfilePage() {
         </Card>
 
         {/* Master Availability */}
-        <Card>
-          <CardHeader className="p-4 pb-2">
-            <CardTitle className="text-sm">Default Availability</CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-2">
-            <p className="text-xs text-muted-foreground mb-3">
-              Set your default availability for each day of the week
-            </p>
-            <div className="grid grid-cols-7 gap-2">
-              {daysOfWeek.map((day) => (
-                <div key={day} className="text-center">
-                  <p className="text-xs font-medium mb-2">{day}</p>
-                  <Switch
-                    checked={availabilityDefaults[day] !== false}
-                    onCheckedChange={() => toggleDayAvailability(day)}
-                  />
+        <Link href="/settings/availability">
+          <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Clock className="h-5 w-5 text-primary" />
+                  <div>
+                    <p className="font-medium text-sm">Default Availability</p>
+                    <p className="text-xs text-muted-foreground">
+                      Set your weekly time availability
+                    </p>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
 
         {/* My Courts */}
         <Card>

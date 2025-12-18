@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,9 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragStartEvent,
+  useDroppable,
+  DragOverlay,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -50,9 +53,13 @@ interface PlayerWithAvailability extends RosterMember {
 function SortablePlayer({
   player,
   onRemove,
+  isSelectionMode = false,
+  onPlayerClick,
 }: {
   player: PlayerWithAvailability
   onRemove: () => void
+  isSelectionMode?: boolean
+  onPlayerClick?: (player: PlayerWithAvailability) => void
 }) {
   const {
     attributes,
@@ -90,8 +97,10 @@ function SortablePlayer({
       className={cn(
         'flex items-center gap-2 p-2 bg-background rounded border-l-4',
         getAvailabilityColor(player.availability),
-        isDragging && 'opacity-50'
+        isDragging && 'opacity-50',
+        isSelectionMode && 'cursor-pointer hover:bg-accent transition-colors'
       )}
+      onClick={() => isSelectionMode && onPlayerClick?.(player)}
     >
       <div {...attributes} {...listeners} className="cursor-grab">
         <GripVertical className="h-4 w-4 text-muted-foreground" />
@@ -106,10 +115,61 @@ function SortablePlayer({
         variant="ghost"
         size="sm"
         className="h-6 w-6 p-0"
-        onClick={onRemove}
+        onClick={(e) => {
+          e.stopPropagation()
+          onRemove()
+        }}
       >
         ×
       </Button>
+    </div>
+  )
+}
+
+function CourtSlotDropZone({
+  courtNumber,
+  slot,
+  player,
+  onRemove,
+  isSelected,
+  onClick,
+  isSelectionMode,
+}: {
+  courtNumber: number
+  slot: 'p1' | 'p2'
+  player: PlayerWithAvailability | null
+  onRemove: () => void
+  isSelected: boolean
+  onClick: () => void
+  isSelectionMode: boolean
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `court-${courtNumber}-${slot}`
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={onClick}
+      className={cn(
+        'min-h-[48px] rounded border-2 border-dashed cursor-pointer transition-colors',
+        player ? 'border-transparent' : 'border-muted-foreground/20',
+        isOver && 'bg-primary/10 border-primary',
+        isSelected && 'ring-2 ring-primary ring-offset-2'
+      )}
+    >
+      {player ? (
+        <SortablePlayer 
+          player={player} 
+          onRemove={onRemove}
+          isSelectionMode={isSelectionMode}
+        />
+      ) : (
+        <div className="flex items-center justify-center h-12 text-sm text-muted-foreground">
+          <User className="h-4 w-4 mr-2" />
+          Player {slot === 'p1' ? '1' : '2'}
+        </div>
+      )}
     </div>
   )
 }
@@ -129,6 +189,12 @@ export default function LineupBuilderPage() {
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
+  const [selectedSlot, setSelectedSlot] = useState<{
+    courtIndex: number
+    slot: 'player1' | 'player2'
+  } | null>(null)
+  const [activePlayer, setActivePlayer] = useState<PlayerWithAvailability | null>(null)
+  const playersContainerRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
 
   const sensors = useSensors(
@@ -138,9 +204,50 @@ export default function LineupBuilderPage() {
     })
   )
 
+  // Split available players into available and unavailable
+  const { available, unavailable } = useMemo(() => {
+    const available = availablePlayers.filter(p =>
+      p.availability === 'available' || p.availability === 'maybe' || p.availability === 'late'
+    )
+    const unavailable = availablePlayers.filter(p =>
+      p.availability === 'unavailable' || !p.availability
+    )
+    return { available, unavailable }
+  }, [availablePlayers])
+
+  // Combine all players for drag context
+  const allDraggablePlayers = useMemo(() => 
+    [...available, ...unavailable].map(p => p.id),
+    [available, unavailable]
+  )
+
   useEffect(() => {
     loadLineupData()
   }, [teamId, matchId])
+
+  // ESC key handler to cancel selection
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setSelectedSlot(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // Click outside handler to cancel selection
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (playersContainerRef.current && !playersContainerRef.current.contains(e.target as Node)) {
+        setSelectedSlot(null)
+      }
+    }
+    if (selectedSlot) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [selectedSlot])
 
   async function loadLineupData() {
     const supabase = createClient()
@@ -220,8 +327,16 @@ export default function LineupBuilderPage() {
     setLoading(false)
   }
 
+  function handleDragStart(event: DragStartEvent) {
+    const playerId = event.active.id as string
+    const player = availablePlayers.find(p => p.id === playerId)
+    setActivePlayer(player || null)
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
+    setActivePlayer(null)
+    
     if (!over) return
 
     const playerId = active.id as string
@@ -234,6 +349,10 @@ export default function LineupBuilderPage() {
       const [, courtNum, slot] = overId.split('-')
       const courtIndex = parseInt(courtNum) - 1
 
+      // Get the player currently in the slot (if any)
+      const slotKey = slot === 'p1' ? 'player1' : 'player2'
+      const displacedPlayer = courts[courtIndex][slotKey]
+
       setCourts(prev => {
         const newCourts = [...prev]
         if (slot === 'p1') {
@@ -244,8 +363,55 @@ export default function LineupBuilderPage() {
         return newCourts
       })
 
-      setAvailablePlayers(prev => prev.filter(p => p.id !== playerId))
+      // Remove assigned player from available list
+      setAvailablePlayers(prev => {
+        let updated = prev.filter(p => p.id !== playerId)
+        // Add back the displaced player if there was one
+        if (displacedPlayer) {
+          updated = [...updated, displacedPlayer]
+        }
+        return updated
+      })
     }
+  }
+
+  function handleSlotClick(courtIndex: number, slot: 'player1' | 'player2') {
+    // If clicking the same slot, deselect
+    if (selectedSlot?.courtIndex === courtIndex && selectedSlot?.slot === slot) {
+      setSelectedSlot(null)
+    } else {
+      setSelectedSlot({ courtIndex, slot })
+    }
+  }
+
+  function handlePlayerClick(player: PlayerWithAvailability) {
+    if (!selectedSlot) return
+
+    // Get the player currently in the slot (if any)
+    const displacedPlayer = courts[selectedSlot.courtIndex][selectedSlot.slot]
+
+    // Assign player to the selected slot
+    setCourts(prev => {
+      const newCourts = [...prev]
+      newCourts[selectedSlot.courtIndex] = {
+        ...newCourts[selectedSlot.courtIndex],
+        [selectedSlot.slot]: player
+      }
+      return newCourts
+    })
+
+    // Update available players list
+    setAvailablePlayers(prev => {
+      let updated = prev.filter(p => p.id !== player.id)
+      // Add back the displaced player if there was one
+      if (displacedPlayer) {
+        updated = [...updated, displacedPlayer]
+      }
+      return updated
+    })
+
+    // Clear selection
+    setSelectedSlot(null)
   }
 
   function removeFromCourt(courtIndex: number, slot: 'player1' | 'player2') {
@@ -353,121 +519,136 @@ export default function LineupBuilderPage() {
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
       <div className="flex flex-col min-h-screen">
         <Header title="Lineup Builder" />
 
-        <main className="flex-1 p-4 space-y-4">
-          {/* Match Info */}
-          {match && (
-            <Card>
-              <CardContent className="p-3">
-                <p className="font-medium">vs {match.opponent_name}</p>
-                <p className="text-sm text-muted-foreground">
-                  {ratingLimit && `Rating Limit: ${ratingLimit}`}
-                </p>
-              </CardContent>
-            </Card>
-          )}
+        <main className="flex-1 p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-180px)]">
+            {/* Left Column: Courts */}
+            <div className="space-y-3 overflow-y-auto">
+              {/* Match Info */}
+              {match && (
+                <Card>
+                  <CardContent className="p-3">
+                    <p className="font-medium">vs {match.opponent_name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {ratingLimit && `Rating Limit: ${ratingLimit}`}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
 
-          {/* Courts */}
-          <div className="space-y-3">
-            {courts.map((court, index) => (
-              <Card key={court.courtNumber} className={cn(isOverLimit(court) && 'border-red-500')}>
-                <CardHeader className="p-3 pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm">Court {court.courtNumber}</CardTitle>
-                    {court.player1 && court.player2 && (
-                      <div className="flex items-center gap-2">
-                        <Badge variant={isOverLimit(court) ? 'destructive' : 'secondary'}>
-                          {getCombinedRating(court).toFixed(1)}
-                        </Badge>
-                        {isOverLimit(court) && (
-                          <AlertTriangle className="h-4 w-4 text-red-500" />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="p-3 pt-0 space-y-2">
-                  {/* Player 1 Slot */}
-                  <div
-                    id={`court-${court.courtNumber}-p1`}
-                    className={cn(
-                      'min-h-[48px] rounded border-2 border-dashed',
-                      court.player1 ? 'border-transparent' : 'border-muted-foreground/20'
-                    )}
-                  >
-                    {court.player1 ? (
-                      <SortablePlayer
-                        player={court.player1}
-                        onRemove={() => removeFromCourt(index, 'player1')}
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-12 text-sm text-muted-foreground">
-                        <User className="h-4 w-4 mr-2" />
-                        Player 1
-                      </div>
-                    )}
-                  </div>
+              {/* Courts */}
+              {courts.map((court, index) => (
+                <Card key={court.courtNumber} className={cn(isOverLimit(court) && 'border-red-500')}>
+                  <CardHeader className="p-3 pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm">Court {court.courtNumber}</CardTitle>
+                      {court.player1 && court.player2 && (
+                        <div className="flex items-center gap-2">
+                          <Badge variant={isOverLimit(court) ? 'destructive' : 'secondary'}>
+                            {getCombinedRating(court).toFixed(1)}
+                          </Badge>
+                          {isOverLimit(court) && (
+                            <AlertTriangle className="h-4 w-4 text-red-500" />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0 space-y-2">
+                    {/* Player 1 Slot */}
+                    <CourtSlotDropZone
+                      courtNumber={court.courtNumber}
+                      slot="p1"
+                      player={court.player1}
+                      onRemove={() => removeFromCourt(index, 'player1')}
+                      isSelected={selectedSlot?.courtIndex === index && selectedSlot?.slot === 'player1'}
+                      onClick={() => handleSlotClick(index, 'player1')}
+                      isSelectionMode={!!selectedSlot}
+                    />
 
-                  {/* Player 2 Slot */}
-                  <div
-                    id={`court-${court.courtNumber}-p2`}
-                    className={cn(
-                      'min-h-[48px] rounded border-2 border-dashed',
-                      court.player2 ? 'border-transparent' : 'border-muted-foreground/20'
-                    )}
-                  >
-                    {court.player2 ? (
-                      <SortablePlayer
-                        player={court.player2}
-                        onRemove={() => removeFromCourt(index, 'player2')}
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-12 text-sm text-muted-foreground">
-                        <User className="h-4 w-4 mr-2" />
-                        Player 2
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                    {/* Player 2 Slot */}
+                    <CourtSlotDropZone
+                      courtNumber={court.courtNumber}
+                      slot="p2"
+                      player={court.player2}
+                      onRemove={() => removeFromCourt(index, 'player2')}
+                      isSelected={selectedSlot?.courtIndex === index && selectedSlot?.slot === 'player2'}
+                      onClick={() => handleSlotClick(index, 'player2')}
+                      isSelectionMode={!!selectedSlot}
+                    />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
 
-          {/* Available Players */}
-          <Card>
-            <CardHeader className="p-3 pb-2">
-              <CardTitle className="text-sm">Available Players ({availablePlayers.length})</CardTitle>
-            </CardHeader>
-            <CardContent className="p-3 pt-0">
+            {/* Right Column: Players */}
+            <div ref={playersContainerRef} className="space-y-3 overflow-y-auto">
               <SortableContext
-                items={availablePlayers.map(p => p.id)}
+                items={allDraggablePlayers}
                 strategy={verticalListSortingStrategy}
               >
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {availablePlayers.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-2">
-                      All players assigned
-                    </p>
-                  ) : (
-                    availablePlayers.map(player => (
-                      <SortablePlayer
-                        key={player.id}
-                        player={player}
-                        onRemove={() => {}}
-                      />
-                    ))
-                  )}
-                </div>
-              </SortableContext>
-            </CardContent>
-          </Card>
+                {/* Available Players */}
+                <Card>
+                  <CardHeader className="p-3 pb-2">
+                    <CardTitle className="text-sm">Available ({available.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0">
+                    <div className="space-y-2">
+                      {available.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">
+                          No available players
+                        </p>
+                      ) : (
+                        available.map(player => (
+                          <SortablePlayer
+                            key={player.id}
+                            player={player}
+                            onRemove={() => {}}
+                            isSelectionMode={!!selectedSlot}
+                            onPlayerClick={handlePlayerClick}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
 
-          {/* Actions */}
-          <div className="flex gap-2">
+                {/* Unavailable Players */}
+                <Card>
+                  <CardHeader className="p-3 pb-2">
+                    <CardTitle className="text-sm">Unavailable ({unavailable.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0">
+                    <div className="space-y-2">
+                      {unavailable.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">
+                          No unavailable players
+                        </p>
+                      ) : (
+                        unavailable.map(player => (
+                          <SortablePlayer
+                            key={player.id}
+                            player={player}
+                            onRemove={() => {}}
+                            isSelectionMode={!!selectedSlot}
+                            onPlayerClick={handlePlayerClick}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </SortableContext>
+            </div>
+          </div>
+
+          {/* Actions - Full width below */}
+          <div className="mt-4 flex gap-2">
             <Button variant="outline" className="flex-1" onClick={() => setShowWizard(true)}>
               <Wand2 className="h-4 w-4 mr-2" />
               Wizard
@@ -486,6 +667,29 @@ export default function LineupBuilderPage() {
           </div>
         </main>
       </div>
+
+      <DragOverlay>
+        {activePlayer ? (
+          <div
+            className={cn(
+              'flex items-center gap-2 p-2 bg-background rounded border-l-4 shadow-lg',
+              activePlayer.availability === 'available' && 'border-l-green-500',
+              activePlayer.availability === 'unavailable' && 'border-l-red-500',
+              activePlayer.availability === 'maybe' && 'border-l-yellow-500',
+              activePlayer.availability === 'late' && 'border-l-orange-500',
+              !activePlayer.availability && 'border-l-gray-300'
+            )}
+          >
+            <GripVertical className="h-4 w-4 text-muted-foreground" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{activePlayer.full_name}</p>
+              {activePlayer.ntrp_rating && (
+                <p className="text-xs text-muted-foreground">{activePlayer.ntrp_rating}</p>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </DragOverlay>
 
       <LineupWizardDialog
         open={showWizard}

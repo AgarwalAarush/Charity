@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -10,7 +10,15 @@ import { createClient } from '@/lib/supabase/client'
 import { RosterMember, Match, Availability } from '@/types/database.types'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
+import { useToast } from '@/hooks/use-toast'
 import { Check, X, HelpCircle, Clock } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface AvailabilityGrid {
   players: RosterMember[]
@@ -20,13 +28,17 @@ interface AvailabilityGrid {
 
 export default function AvailabilityPage() {
   const params = useParams()
+  const router = useRouter()
   const teamId = params.id as string
   const [data, setData] = useState<AvailabilityGrid>({
     players: [],
     matches: [],
     availability: {},
   })
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [currentUserRosterIds, setCurrentUserRosterIds] = useState<Record<string, string>>({}) // teamId -> rosterMemberId
   const [loading, setLoading] = useState(true)
+  const { toast } = useToast()
 
   useEffect(() => {
     loadAvailabilityData()
@@ -34,6 +46,24 @@ export default function AvailabilityPage() {
 
   async function loadAvailabilityData() {
     const supabase = createClient()
+
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    setCurrentUserId(user?.id || null)
+    
+    // Get current user's roster member ID for this team
+    if (user) {
+      const { data: userRoster } = await supabase
+        .from('roster_members')
+        .select('id')
+        .eq('team_id', teamId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      
+      if (userRoster) {
+        setCurrentUserRosterIds({ [teamId]: userRoster.id })
+      }
+    }
 
     // Load roster
     const { data: players } = await supabase
@@ -84,26 +114,41 @@ export default function AvailabilityPage() {
   async function updateAvailability(
     playerId: string,
     matchId: string,
-    status: 'available' | 'unavailable' | 'maybe' | 'late'
+    status: 'available' | 'unavailable' | 'maybe'
   ) {
     const supabase = createClient()
 
     const existing = data.availability[playerId]?.[matchId]
 
+    let error = null
     if (existing) {
-      await supabase
+      const result = await supabase
         .from('availability')
         .update({ status })
         .eq('id', existing.id)
+      error = result.error
     } else {
-      await supabase.from('availability').insert({
+      const result = await supabase.from('availability').insert({
         roster_member_id: playerId,
         match_id: matchId,
         status,
       })
+      error = result.error
     }
 
-    loadAvailabilityData()
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Updated',
+        description: 'Availability updated',
+      })
+      loadAvailabilityData()
+    }
   }
 
   const getStatusIcon = (status?: string) => {
@@ -133,6 +178,15 @@ export default function AvailabilityPage() {
         return 'bg-orange-100 hover:bg-orange-200'
       default:
         return 'bg-gray-50 hover:bg-gray-100'
+    }
+  }
+
+  function getAvailabilityDisplay(avail?: Availability) {
+    if (!avail) return { icon: <span className="h-4 w-4 text-gray-300">-</span>, text: 'Not set' }
+    
+    return {
+      icon: getStatusIcon(avail.status),
+      text: avail.status || 'Not set'
     }
   }
 
@@ -192,26 +246,53 @@ export default function AvailabilityPage() {
                     </td>
                     {data.matches.map(match => {
                       const avail = data.availability[player.id]?.[match.id]
+                      const display = getAvailabilityDisplay(avail)
+                      const isCurrentUser = player.user_id === currentUserId
+                      
                       return (
                         <td key={match.id} className="p-1">
-                          <div className="flex justify-center">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className={cn(
-                                'h-10 w-10 p-0 rounded-lg',
+                          <div className="flex flex-col items-center gap-1">
+                            {isCurrentUser ? (
+                              <Select
+                                value={avail?.status || 'unavailable'}
+                                onValueChange={(value) => updateAvailability(player.id, match.id, value as 'available' | 'unavailable' | 'maybe')}
+                              >
+                                <SelectTrigger className="h-8 w-full text-xs">
+                                  <SelectValue>
+                                    <div className="flex items-center justify-center">
+                                      {display.icon}
+                                    </div>
+                                  </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="available">
+                                    <div className="flex items-center gap-2">
+                                      <Check className="h-3 w-3 text-green-500" />
+                                      <span>Available</span>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="maybe">
+                                    <div className="flex items-center gap-2">
+                                      <HelpCircle className="h-3 w-3 text-yellow-500" />
+                                      <span>Maybe</span>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="unavailable">
+                                    <div className="flex items-center gap-2">
+                                      <X className="h-3 w-3 text-red-500" />
+                                      <span>Unavailable</span>
+                                    </div>
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <div className={cn(
+                                'flex items-center justify-center h-8 w-full rounded px-1',
                                 getStatusBg(avail?.status)
-                              )}
-                              onClick={() => {
-                                const statuses: Array<'available' | 'unavailable' | 'maybe' | 'late'> =
-                                  ['available', 'unavailable', 'maybe', 'late']
-                                const currentIdx = statuses.indexOf(avail?.status as 'available' | 'unavailable' | 'maybe' | 'late')
-                                const nextStatus = statuses[(currentIdx + 1) % statuses.length]
-                                updateAvailability(player.id, match.id, nextStatus)
-                              }}
-                            >
-                              {getStatusIcon(avail?.status)}
-                            </Button>
+                              )}>
+                                {display.icon}
+                              </div>
+                            )}
                           </div>
                         </td>
                       )
