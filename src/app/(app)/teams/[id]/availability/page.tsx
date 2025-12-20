@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { RosterMember, Match, Availability } from '@/types/database.types'
+import { RosterMember, Match, Event, Availability } from '@/types/database.types'
 import { formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
@@ -22,7 +22,7 @@ import {
 
 interface AvailabilityGrid {
   players: RosterMember[]
-  matches: Match[]
+  items: Array<{ type: 'match' | 'event'; data: Match | Event; id: string; date: string }>
   availability: Record<string, Record<string, Availability>>
 }
 
@@ -32,7 +32,7 @@ export default function AvailabilityPage() {
   const teamId = params.id as string
   const [data, setData] = useState<AvailabilityGrid>({
     players: [],
-    matches: [],
+    items: [],
     availability: {},
   })
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
@@ -83,42 +83,78 @@ export default function AvailabilityPage() {
       .order('date')
       .limit(10)
 
-    if (!players || !matches) {
+    // Load upcoming events
+    const { data: events } = await supabase
+      .from('events')
+      .select('*')
+      .eq('team_id', teamId)
+      .gte('date', today)
+      .order('date')
+      .limit(10)
+
+    if (!players || (!matches && !events)) {
       setLoading(false)
       return
     }
 
+    // Combine matches and events into a single sorted list
+    const items: Array<{ type: 'match' | 'event'; data: Match | Event; id: string; date: string }> = []
+    
+    matches?.forEach(match => {
+      items.push({
+        type: 'match',
+        data: match,
+        id: match.id,
+        date: match.date
+      })
+    })
+
+    events?.forEach(event => {
+      items.push({
+        type: 'event',
+        data: event,
+        id: event.id,
+        date: event.date
+      })
+    })
+
+    // Sort by date
+    items.sort((a, b) => a.date.localeCompare(b.date))
+
     // Load availability for all combinations
-    const matchIds = matches.map(m => m.id)
+    const itemIds = items.map(item => item.id)
     const playerIds = players.map(p => p.id)
 
     const { data: availabilityData } = await supabase
       .from('availability')
       .select('*')
-      .in('match_id', matchIds)
       .in('roster_member_id', playerIds)
 
     // Build availability lookup
     const availability: Record<string, Record<string, Availability>> = {}
     availabilityData?.forEach(a => {
+      const itemId = a.match_id || a.event_id
+      if (!itemId) return
+      
       if (!availability[a.roster_member_id]) {
         availability[a.roster_member_id] = {}
       }
-      availability[a.roster_member_id][a.match_id] = a
+      availability[a.roster_member_id][itemId] = a
     })
 
-    setData({ players, matches, availability })
+    setData({ players, items, availability })
     setLoading(false)
   }
 
   async function updateAvailability(
     playerId: string,
-    matchId: string,
+    itemId: string,
+    itemType: 'match' | 'event',
     status: 'available' | 'unavailable' | 'maybe'
   ) {
     const supabase = createClient()
 
-    const existing = data.availability[playerId]?.[matchId]
+    const existing = data.availability[playerId]?.[itemId]
 
     let error = null
     if (existing) {
@@ -128,11 +164,18 @@ export default function AvailabilityPage() {
         .eq('id', existing.id)
       error = result.error
     } else {
-      const result = await supabase.from('availability').insert({
+      const insertData: any = {
         roster_member_id: playerId,
-        match_id: matchId,
         status,
-      })
+      }
+      
+      if (itemType === 'match') {
+        insertData.match_id = itemId
+      } else {
+        insertData.event_id = itemId
+      }
+      
+      const result = await supabase.from('availability').insert(insertData)
       error = result.error
     }
 
@@ -203,10 +246,10 @@ export default function AvailabilityPage() {
       <Header title="Availability" />
 
       <main className="flex-1 p-4">
-        {data.matches.length === 0 ? (
+        {data.items.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center">
-              <p className="text-muted-foreground">No upcoming matches</p>
+              <p className="text-muted-foreground">No upcoming matches or events</p>
             </CardContent>
           </Card>
         ) : (
@@ -217,16 +260,26 @@ export default function AvailabilityPage() {
                   <th className="sticky left-0 bg-background p-2 text-left text-sm font-medium min-w-[120px]">
                     Player
                   </th>
-                  {data.matches.map(match => (
-                    <th key={match.id} className="p-2 text-center min-w-[80px]">
-                      <div className="text-xs font-medium">
-                        {formatDate(match.date, 'MMM d')}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {match.opponent_name}
-                      </div>
-                    </th>
-                  ))}
+                  {data.items.map(item => {
+                    const itemData = item.data as any
+                    const displayName = item.type === 'match' 
+                      ? `vs ${itemData.opponent_name}`
+                      : itemData.event_name
+                    
+                    return (
+                      <th key={item.id} className="p-2 text-center min-w-[80px]">
+                        <div className="text-xs font-medium">
+                          {formatDate(item.date, 'MMM d')}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {displayName}
+                        </div>
+                        <Badge variant={item.type === 'match' ? 'default' : 'secondary'} className="text-[10px] mt-1">
+                          {item.type === 'match' ? 'Match' : 'Event'}
+                        </Badge>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -244,18 +297,18 @@ export default function AvailabilityPage() {
                         )}
                       </div>
                     </td>
-                    {data.matches.map(match => {
-                      const avail = data.availability[player.id]?.[match.id]
+                    {data.items.map(item => {
+                      const avail = data.availability[player.id]?.[item.id]
                       const display = getAvailabilityDisplay(avail)
                       const isCurrentUser = player.user_id === currentUserId
                       
                       return (
-                        <td key={match.id} className="p-1">
+                        <td key={item.id} className="p-1">
                           <div className="flex flex-col items-center gap-1">
                             {isCurrentUser ? (
                               <Select
                                 value={avail?.status || 'unavailable'}
-                                onValueChange={(value) => updateAvailability(player.id, match.id, value as 'available' | 'unavailable' | 'maybe')}
+                                onValueChange={(value) => updateAvailability(player.id, item.id, item.type, value as 'available' | 'unavailable' | 'maybe')}
                               >
                                 <SelectTrigger className="h-8 w-full text-xs">
                                   <SelectValue>

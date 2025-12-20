@@ -18,8 +18,9 @@ export type Database = {
         Row: {
           comment: string | null
           created_at: string | null
+          event_id: string | null
           id: string
-          match_id: string
+          match_id: string | null
           responded_at: string | null
           roster_member_id: string
           status: string
@@ -28,8 +29,9 @@ export type Database = {
         Insert: {
           comment?: string | null
           created_at?: string | null
+          event_id?: string | null
           id?: string
-          match_id: string
+          match_id?: string | null
           responded_at?: string | null
           roster_member_id: string
           status: string
@@ -38,14 +40,22 @@ export type Database = {
         Update: {
           comment?: string | null
           created_at?: string | null
+          event_id?: string | null
           id?: string
-          match_id?: string
+          match_id?: string | null
           responded_at?: string | null
           roster_member_id?: string
           status?: string
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "availability_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "availability_match_id_fkey"
             columns: ["match_id"]
@@ -234,6 +244,50 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      events: {
+        Row: {
+          created_at: string | null
+          date: string
+          description: string | null
+          event_name: string
+          id: string
+          location: string | null
+          team_id: string
+          time: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          date: string
+          description?: string | null
+          event_name: string
+          id?: string
+          location?: string | null
+          team_id: string
+          time: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          date?: string
+          description?: string | null
+          event_name?: string
+          id?: string
+          location?: string | null
+          team_id?: string
+          time?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "events_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
             referencedColumns: ["id"]
           },
         ]
@@ -996,3 +1050,17 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
+// Type exports for convenience
+export type Team = Tables<'teams'>
+export type Match = Tables<'matches'>
+export type Event = Tables<'events'>
+export type RosterMember = Tables<'roster_members'>
+export type Availability = Tables<'availability'>
+export type Profile = Tables<'profiles'>
+export type Lineup = Tables<'lineups'>
+export type MatchScore = Tables<'match_scores'>
+export type Conversation = Tables<'conversations'>
+export type Message = Tables<'messages'>
+export type TeamInvitation = Tables<'team_invitations'>
+

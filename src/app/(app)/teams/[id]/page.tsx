@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { Team, Match } from '@/types/database.types'
+import { Team, Match, Event } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import {
   Users,
@@ -18,9 +18,11 @@ import {
   ChevronRight,
   Settings,
   ListChecks,
-  MessageCircle
+  MessageCircle,
+  CalendarPlus
 } from 'lucide-react'
 import { AddMatchDialog } from '@/components/teams/add-match-dialog'
+import { AddEventDialog } from '@/components/teams/add-event-dialog'
 
 export default function TeamDetailPage() {
   const params = useParams()
@@ -28,9 +30,11 @@ export default function TeamDetailPage() {
   const teamId = params.id as string
   const [team, setTeam] = useState<Team | null>(null)
   const [matches, setMatches] = useState<Match[]>([])
+  const [events, setEvents] = useState<Event[]>([])
   const [rosterCount, setRosterCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showAddMatchDialog, setShowAddMatchDialog] = useState(false)
+  const [showAddEventDialog, setShowAddEventDialog] = useState(false)
   const [teamConversationId, setTeamConversationId] = useState<string | null>(null)
   const [pendingInvitesCount, setPendingInvitesCount] = useState(0)
   const [isCaptain, setIsCaptain] = useState(false)
@@ -104,6 +108,29 @@ export default function TeamDetailPage() {
 
     if (matchData) {
       setMatches(matchData)
+    }
+
+    // Load upcoming events (gracefully handle if table doesn't exist yet)
+    const { data: eventData, error: eventError } = await supabase
+      .from('events')
+      .select('*')
+      .eq('team_id', teamId)
+      .gte('date', today)
+      .order('date', { ascending: true })
+      .limit(5)
+
+    console.log('5. Upcoming events (date >= today):', { eventData, eventError, count: eventData?.length })
+
+    // Only log error if it's not a "relation does not exist" error (table not created yet)
+    if (eventError && !eventError.message?.includes('relation') && !eventError.code?.includes('42P01')) {
+      console.error('Error loading events on team detail:', eventError)
+    }
+
+    // Set events data if available, otherwise default to empty array
+    if (eventData) {
+      setEvents(eventData)
+    } else {
+      setEvents([])
     }
 
     const { count } = await supabase
@@ -243,7 +270,7 @@ export default function TeamDetailPage() {
         )}
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <Link href={`/teams/${teamId}/roster`}>
             <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
               <CardContent className="p-4 flex flex-col items-center justify-center text-center">
@@ -272,6 +299,16 @@ export default function TeamDetailPage() {
               <Plus className="h-6 w-6 mb-2 text-primary" />
               <span className="text-sm font-medium">Add Match</span>
               <span className="text-xs text-muted-foreground">Single or CSV</span>
+            </CardContent>
+          </Card>
+          <Card
+            className="hover:bg-accent/50 transition-colors cursor-pointer"
+            onClick={() => setShowAddEventDialog(true)}
+          >
+            <CardContent className="p-4 flex flex-col items-center justify-center text-center">
+              <CalendarPlus className="h-6 w-6 mb-2 text-primary" />
+              <span className="text-sm font-medium">Add Event</span>
+              <span className="text-xs text-muted-foreground">Practice, Dinner</span>
             </CardContent>
           </Card>
         </div>
@@ -344,6 +381,63 @@ export default function TeamDetailPage() {
           )}
         </div>
 
+        {/* Upcoming Events */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              Upcoming Events
+            </h2>
+          </div>
+
+          {events.length === 0 ? (
+            <Card>
+              <CardContent className="py-6 text-center">
+                <Calendar className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground mb-3">No events scheduled</p>
+                {isCaptain && (
+                  <Button size="sm" onClick={() => setShowAddEventDialog(true)}>
+                    Create Event
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {events.map((event) => (
+                <Card 
+                  key={event.id} 
+                  className="hover:bg-accent/50 transition-colors cursor-pointer"
+                  onClick={() => router.push(`/teams/${teamId}/events/${event.id}`)}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium text-sm">
+                            {event.event_name}
+                          </span>
+                          <Badge variant="secondary" className="text-xs">
+                            Event
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(event.date, 'MMM d')} at {formatTime(event.time)}
+                        </p>
+                        {event.location && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            📍 {event.location}
+                          </p>
+                        )}
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Captain Tools */}
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
@@ -371,6 +465,16 @@ export default function TeamDetailPage() {
         teamId={teamId}
         onAdded={() => {
           setShowAddMatchDialog(false)
+          loadTeamData()
+        }}
+      />
+
+      <AddEventDialog
+        open={showAddEventDialog}
+        onOpenChange={setShowAddEventDialog}
+        teamId={teamId}
+        onAdded={() => {
+          setShowAddEventDialog(false)
           loadTeamData()
         }}
       />
