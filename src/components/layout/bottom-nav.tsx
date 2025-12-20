@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Users, Gamepad2, Trophy, User, MessageCircle } from 'lucide-react'
+import { Home, Users, Gamepad2, Trophy, User, MessageCircle, Calendar } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -10,6 +10,11 @@ const navItems = [
     label: 'Home',
     href: '/home',
     icon: Home,
+  },
+  {
+    label: 'Calendar',
+    href: '/calendar',
+    icon: Calendar,
   },
   {
     label: 'Teams',
@@ -20,11 +25,6 @@ const navItems = [
     label: 'Messages',
     href: '/messages',
     icon: MessageCircle,
-  },
-  {
-    label: 'History',
-    href: '/match-history',
-    icon: Trophy,
   },
   {
     label: 'Profile',
