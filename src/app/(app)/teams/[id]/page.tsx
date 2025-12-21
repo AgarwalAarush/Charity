@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { Team, Match, Event } from '@/types/database.types'
-import { formatDate, formatTime } from '@/lib/utils'
+import { formatDate, formatTime, cn } from '@/lib/utils'
+import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import {
   Users,
   Calendar,
@@ -416,8 +417,14 @@ export default function TeamDetailPage() {
                           <span className="font-medium text-sm">
                             {event.event_name}
                           </span>
-                          <Badge variant="secondary" className="text-xs">
-                            Event
+                          <Badge 
+                            variant="secondary" 
+                            className={cn(
+                              "text-xs",
+                              (event as any).event_type && getEventTypeBadgeClass((event as any).event_type)
+                            )}
+                          >
+                            {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground">

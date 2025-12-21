@@ -25,6 +25,8 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 import { addDays, addWeeks, format, parseISO } from 'date-fns'
+import { getEventTypes } from '@/lib/event-type-colors'
+import { EventType } from '@/lib/calendar-utils'
 
 interface AddEventDialogProps {
   open: boolean
@@ -44,6 +46,7 @@ export function AddEventDialog({
   const [time, setTime] = useState('')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
+  const [eventType, setEventType] = useState<EventType | ''>('')
   const [isRecurring, setIsRecurring] = useState(false)
   const [recurrencePattern, setRecurrencePattern] = useState<'daily' | 'weekly' | 'custom'>('weekly')
   const [endType, setEndType] = useState<'date' | 'occurrences'>('date')
@@ -58,6 +61,7 @@ export function AddEventDialog({
     setTime('')
     setLocation('')
     setDescription('')
+    setEventType('')
     setIsRecurring(false)
     setRecurrencePattern('weekly')
     setEndType('date')
@@ -204,6 +208,7 @@ export function AddEventDialog({
           time,
           location: location || null,
           description: description || null,
+          event_type: eventType || null,
         }
 
         // Only add recurrence fields if this is a recurring event
@@ -225,11 +230,12 @@ export function AddEventDialog({
       const { error } = await supabase.from('events').insert(eventsToCreate)
 
       if (error) {
-        // Check if error is due to missing recurrence columns
-        if (error.message.includes('recurrence') || error.message.includes('schema cache')) {
+        // Check if error is due to missing columns
+        const errorMsg = error.message.toLowerCase()
+        if (errorMsg.includes('recurrence') || errorMsg.includes('event_type') || errorMsg.includes('schema cache') || errorMsg.includes('column')) {
           toast({
             title: 'Migration Required',
-            description: 'Please run the recurring_events_migration.sql migration in your Supabase SQL Editor, then refresh your schema cache.',
+            description: 'Please run the recurring_events_migration.sql migration in your Supabase SQL Editor. Then run: NOTIFY pgrst, \'reload schema\';',
             variant: 'destructive',
           })
         } else {
@@ -283,6 +289,26 @@ export function AddEventDialog({
               onChange={(e) => setEventName(e.target.value)}
               required
             />
+          </div>
+
+          {/* Event Type */}
+          <div className="space-y-2">
+            <Label htmlFor="eventType">Event Type</Label>
+            <Select
+              value={eventType}
+              onValueChange={(value) => setEventType(value as EventType)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select event type (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {getEventTypes().map((type) => (
+                  <SelectItem key={type.value} value={type.value}>
+                    {type.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

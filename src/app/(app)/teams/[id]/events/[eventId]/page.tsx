@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Event, RosterMember, Availability } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
+import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import { EditEventDialog } from '@/components/teams/edit-event-dialog'
 import {
   Select,
@@ -301,7 +302,12 @@ export default function EventDetailPage() {
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">{event.event_name}</h2>
-              <Badge variant="secondary">Event</Badge>
+              <Badge 
+                variant="secondary" 
+                className={(event as any).event_type ? getEventTypeBadgeClass((event as any).event_type) : ''}
+              >
+                {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
+              </Badge>
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">

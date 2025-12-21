@@ -19,9 +19,12 @@ import {
 } from '@/lib/calendar-utils'
 import { ChevronLeft, ChevronRight, Filter, Calendar as CalendarIcon } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WeekView } from '@/components/calendar/week-view'
 import { MonthView } from '@/components/calendar/month-view'
 import { CalendarFilters } from '@/components/calendar/calendar-filters'
+import { useToast } from '@/hooks/use-toast'
+import { startOfWeek, addDays } from 'date-fns'
 
 type ViewMode = 'week' | 'month'
 
@@ -33,6 +36,7 @@ interface TeamInfo {
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [viewMode, setViewMode] = useState<ViewMode>('week')
+  const [numWeeks, setNumWeeks] = useState(2)
   const [calendarItems, setCalendarItems] = useState<CalendarItem[]>([])
   const [teams, setTeams] = useState<TeamInfo[]>([])
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
@@ -40,6 +44,7 @@ export default function CalendarPage() {
   const [showEvents, setShowEvents] = useState(true)
   const [loading, setLoading] = useState(true)
   const [teamsLoaded, setTeamsLoaded] = useState(false)
+  const { toast } = useToast()
 
   useEffect(() => {
     loadTeams()
@@ -51,7 +56,7 @@ export default function CalendarPage() {
     if (teamsLoaded) {
       loadCalendarData()
     }
-  }, [currentDate, viewMode, teams, selectedTeamIds, showMatches, showEvents, teamsLoaded])
+  }, [currentDate, viewMode, numWeeks, teams, selectedTeamIds, showMatches, showEvents, teamsLoaded])
 
   async function loadTeams() {
     const supabase = createClient()
@@ -106,7 +111,7 @@ export default function CalendarPage() {
     // Determine date range based on view mode
     const dateRange = viewMode === 'month' 
       ? getDateRangeForMonth(currentDate)
-      : getDateRangeForWeek(currentDate)
+      : getDateRangeForWeek(currentDate, numWeeks)
 
     // Filter teams if specific teams selected
     const teamIds = selectedTeamIds.length > 0 ? selectedTeamIds : teams.map(t => t.id)
@@ -160,6 +165,7 @@ export default function CalendarPage() {
             teamId: event.team_id,
             teamName: event.teams.name,
             name: event.event_name,
+            eventType: event.event_type || undefined,
           })
         })
       }
@@ -204,7 +210,7 @@ export default function CalendarPage() {
     if (viewMode === 'month') {
       setCurrentDate(getPreviousMonth(currentDate))
     } else {
-      setCurrentDate(getPreviousWeek(currentDate))
+      setCurrentDate(getPreviousWeek(currentDate, numWeeks))
     }
   }
 
@@ -212,7 +218,7 @@ export default function CalendarPage() {
     if (viewMode === 'month') {
       setCurrentDate(getNextMonth(currentDate))
     } else {
-      setCurrentDate(getNextWeek(currentDate))
+      setCurrentDate(getNextWeek(currentDate, numWeeks))
     }
   }
 
@@ -239,8 +245,23 @@ export default function CalendarPage() {
 
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-semibold">
-                  {formatCalendarDate(currentDate, 'MMMM yyyy')}
+                  {viewMode === 'week' 
+                    ? formatCalendarDate(currentDate, 'MMMM yyyy')
+                    : formatCalendarDate(currentDate, 'MMMM yyyy')}
                 </h2>
+                {viewMode === 'week' && (
+                  <Select value={numWeeks.toString()} onValueChange={(value) => setNumWeeks(parseInt(value))}>
+                    <SelectTrigger className="w-24 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 week</SelectItem>
+                      <SelectItem value="2">2 weeks</SelectItem>
+                      <SelectItem value="3">3 weeks</SelectItem>
+                      <SelectItem value="4">4 weeks</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
 
               <Button
@@ -281,6 +302,67 @@ export default function CalendarPage() {
           </CardContent>
         </Card>
 
+        {/* Team Filter Chips - Quick Access */}
+        {teams.length > 1 && (
+          <Card>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium text-muted-foreground mr-1">Teams:</span>
+                {teams.map((team) => {
+                  const isSelected = selectedTeamIds.includes(team.id)
+                  return (
+                    <Button
+                      key={team.id}
+                      variant={isSelected ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        if (isSelected) {
+                          // If clicking a selected team, deselect it (but keep at least one selected)
+                          if (selectedTeamIds.length > 1) {
+                            setSelectedTeamIds(selectedTeamIds.filter(id => id !== team.id))
+                          } else {
+                            // Can't deselect the last team - show a message or prevent action
+                            toast({
+                              title: 'Cannot deselect',
+                              description: 'At least one team must be selected',
+                              variant: 'default',
+                            })
+                          }
+                        } else {
+                          // Add to selection
+                          setSelectedTeamIds([...selectedTeamIds, team.id])
+                        }
+                      }}
+                    >
+                      {team.name}
+                      {isSelected && selectedTeamIds.length > 1 && (
+                        <span className="ml-1">×</span>
+                      )}
+                    </Button>
+                  )
+                })}
+                {selectedTeamIds.length !== teams.length && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      if (selectedTeamIds.length === teams.length) {
+                        setSelectedTeamIds([])
+                      } else {
+                        setSelectedTeamIds(teams.map(t => t.id))
+                      }
+                    }}
+                  >
+                    {selectedTeamIds.length === teams.length ? 'Deselect All' : 'Select All'}
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Filters Summary */}
         {(selectedTeamIds.length !== teams.length || !showMatches || !showEvents) && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -303,7 +385,7 @@ export default function CalendarPage() {
             </CardContent>
           </Card>
         ) : viewMode === 'week' ? (
-          <WeekView currentDate={currentDate} items={calendarItems} />
+          <WeekView currentDate={currentDate} items={calendarItems} numWeeks={numWeeks} />
         ) : (
           <MonthView currentDate={currentDate} items={calendarItems} />
         )}

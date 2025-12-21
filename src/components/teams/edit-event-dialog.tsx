@@ -26,6 +26,8 @@ import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
 import { addDays, addWeeks, format, parseISO, isBefore, isAfter } from 'date-fns'
 import { Event } from '@/types/database.types'
+import { getEventTypes } from '@/lib/event-type-colors'
+import { EventType } from '@/lib/calendar-utils'
 
 interface EditEventDialogProps {
   open: boolean
@@ -47,6 +49,7 @@ export function EditEventDialog({
   const [time, setTime] = useState('')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
+  const [eventType, setEventType] = useState<EventType | ''>('')
   const [isRecurring, setIsRecurring] = useState(false)
   const [recurrencePattern, setRecurrencePattern] = useState<'daily' | 'weekly' | 'custom'>('weekly')
   const [endType, setEndType] = useState<'date' | 'occurrences'>('date')
@@ -64,6 +67,7 @@ export function EditEventDialog({
       setTime(event.time || '')
       setLocation(event.location || '')
       setDescription(event.description || '')
+      setEventType((event as any).event_type || '')
       
       // Check if this is part of a recurring series
       const hasSeriesId = (event as any).recurrence_series_id
@@ -240,6 +244,7 @@ export function EditEventDialog({
             time,
             location: location || null,
             description: description || null,
+            event_type: eventType || null,
           })
           .eq('id', event.id)
 
@@ -292,6 +297,7 @@ export function EditEventDialog({
           time,
           location: location || null,
           description: description || null,
+          event_type: eventType || null,
           recurrence_series_id: seriesId,
           recurrence_original_date: date,
           recurrence_pattern: recurrencePattern,
@@ -381,6 +387,26 @@ export function EditEventDialog({
               onChange={(e) => setEventName(e.target.value)}
               required
             />
+          </div>
+
+          {/* Event Type */}
+          <div className="space-y-2">
+            <Label htmlFor="eventType">Event Type</Label>
+            <Select
+              value={eventType}
+              onValueChange={(value) => setEventType(value as EventType)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select event type (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {getEventTypes().map((type) => (
+                  <SelectItem key={type.value} value={type.value}>
+                    {type.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

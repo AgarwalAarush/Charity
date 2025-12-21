@@ -4,16 +4,18 @@ import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { CalendarItem } from '@/lib/calendar-utils'
 import { getTeamColorClass } from '@/lib/team-colors'
-import { formatTime } from '@/lib/utils'
+import { getEventTypeBadgeClass, getEventTypeLabel } from '@/lib/event-type-colors'
+import { formatTime, formatDate } from '@/lib/utils'
 import { Check, X, HelpCircle, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface CalendarItemTileProps {
   item: CalendarItem
   compact?: boolean
+  showDate?: boolean
 }
 
-export function CalendarItemTile({ item, compact = false }: CalendarItemTileProps) {
+export function CalendarItemTile({ item, compact = false, showDate = false }: CalendarItemTileProps) {
   const router = useRouter()
 
   const getAvailabilityIcon = () => {
@@ -55,12 +57,24 @@ export function CalendarItemTile({ item, compact = false }: CalendarItemTileProp
           <div className="flex items-center gap-1.5 mb-0.5">
             <Badge 
               variant={item.type === 'match' ? 'default' : 'secondary'} 
-              className="text-[10px] px-1 py-0 h-4"
+              className={cn(
+                "text-[10px] px-1 py-0 h-4",
+                item.type === 'event' && item.eventType && getEventTypeBadgeClass(item.eventType)
+              )}
             >
-              {item.type === 'match' ? 'Match' : 'Event'}
+              {item.type === 'match' ? 'Match' : (item.eventType ? getEventTypeLabel(item.eventType) : 'Event')}
             </Badge>
             {getAvailabilityIcon()}
           </div>
+          
+          {showDate && (
+            <p className={cn(
+              'text-foreground mb-1 font-bold',
+              compact ? 'text-lg' : 'text-xl'
+            )}>
+              {formatDate(item.date, 'd')}
+            </p>
+          )}
           
           <p className={cn(
             'font-medium truncate',

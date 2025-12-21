@@ -9,6 +9,8 @@ export interface CalendarDay {
   isWeekend: boolean
 }
 
+export type EventType = 'practice' | 'warmup' | 'fun' | 'social' | 'other'
+
 export interface CalendarItem {
   id: string
   type: 'match' | 'event'
@@ -18,6 +20,7 @@ export interface CalendarItem {
   teamName: string
   name: string // opponent name for match, event name for event
   availabilityStatus?: 'available' | 'unavailable' | 'maybe' | 'late'
+  eventType?: EventType // Only for events
 }
 
 /**
@@ -46,11 +49,14 @@ export function getMonthDays(date: Date): CalendarDay[] {
 }
 
 /**
- * Get 7 days for a week view starting from Sunday
+ * Get days for a week view starting from Sunday
+ * @param date - The current date
+ * @param numWeeks - Number of weeks to display (default: 2)
  */
-export function getWeekDays(date: Date): CalendarDay[] {
+export function getWeekDays(date: Date, numWeeks: number = 2): CalendarDay[] {
   const weekStart = startOfWeek(date, { weekStartsOn: 0 }) // Sunday
-  const weekEnd = endOfWeek(date, { weekStartsOn: 0 })
+  const totalDays = numWeeks * 7
+  const weekEnd = addDays(weekStart, totalDays - 1)
   
   const days = eachDayOfInterval({ start: weekStart, end: weekEnd })
   
@@ -120,10 +126,13 @@ export function getDateRangeForMonth(date: Date): { start: string; end: string }
 
 /**
  * Get date range for loading data for a week view
+ * @param date - The current date
+ * @param numWeeks - Number of weeks to display (default: 2)
  */
-export function getDateRangeForWeek(date: Date): { start: string; end: string } {
+export function getDateRangeForWeek(date: Date, numWeeks: number = 2): { start: string; end: string } {
   const weekStart = startOfWeek(date, { weekStartsOn: 0 })
-  const weekEnd = endOfWeek(date, { weekStartsOn: 0 })
+  const totalDays = numWeeks * 7
+  const weekEnd = addDays(weekStart, totalDays - 1)
   
   return {
     start: format(weekStart, 'yyyy-MM-dd'),
@@ -157,15 +166,19 @@ export function getNextMonth(date: Date): Date {
 
 /**
  * Navigate to previous week
+ * @param date - The current date
+ * @param numWeeks - Number of weeks to go back (default: 2)
  */
-export function getPreviousWeek(date: Date): Date {
-  return subDays(date, 7)
+export function getPreviousWeek(date: Date, numWeeks: number = 2): Date {
+  return subDays(date, numWeeks * 7)
 }
 
 /**
  * Navigate to next week
+ * @param date - The current date
+ * @param numWeeks - Number of weeks to go forward (default: 2)
  */
-export function getNextWeek(date: Date): Date {
-  return addDays(date, 7)
+export function getNextWeek(date: Date, numWeeks: number = 2): Date {
+  return addDays(date, numWeeks * 7)
 }
 
