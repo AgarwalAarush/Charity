@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -31,8 +31,14 @@ import {
   Mail,
   ClipboardList,
   Thermometer,
-  Trophy
+  Trophy,
+  Edit,
+  Save,
+  XCircle,
+  Loader2,
+  Timer
 } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
 import { ScoreEntryDialog } from '@/components/matches/score-entry-dialog'
 import { MatchResultBadge } from '@/components/matches/match-result-badge'
 import { formatScoreDisplay } from '@/lib/score-utils'
@@ -45,12 +51,16 @@ interface ChecklistItem {
 
 export default function MatchDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const teamId = params.id as string
   const matchId = params.matchId as string
   const [match, setMatch] = useState<Match | null>(null)
   const [team, setTeam] = useState<Team | null>(null)
   const [loading, setLoading] = useState(true)
   const [isCaptain, setIsCaptain] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editedMatch, setEditedMatch] = useState<Partial<Match>>({})
+  const [saving, setSaving] = useState(false)
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false)
   const [courtScores, setCourtScores] = useState<any[]>([])
   const { toast } = useToast()
@@ -83,6 +93,17 @@ export default function MatchDetailPage() {
 
     if (matchData) {
       setMatch(matchData)
+      setEditedMatch({
+        opponent_name: matchData.opponent_name,
+        date: matchData.date,
+        time: matchData.time,
+        duration: (matchData as any).duration || null,
+        venue: matchData.venue,
+        venue_address: matchData.venue_address,
+        opponent_captain_name: matchData.opponent_captain_name,
+        opponent_captain_email: matchData.opponent_captain_email,
+        is_home: matchData.is_home,
+      })
       setWarmupStatus(matchData.warm_up_status)
       setWarmupTime(matchData.warm_up_time || '')
       setWarmupCourt(matchData.warm_up_court || '')
@@ -117,6 +138,11 @@ export default function MatchDetailPage() {
     await loadCourtScores()
 
     setLoading(false)
+
+    // Auto-enter edit mode for captains when match loads
+    if (matchData && teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      setIsEditing(true)
+    }
   }
 
   async function loadCourtScores() {
@@ -248,6 +274,82 @@ Thank you`)
     return matchDate <= today
   }
 
+  function handleStartEdit() {
+    if (match) {
+      setEditedMatch({
+        opponent_name: match.opponent_name,
+        date: match.date,
+        time: match.time,
+        duration: (match as any).duration || null,
+        venue: match.venue,
+        venue_address: match.venue_address,
+        opponent_captain_name: match.opponent_captain_name,
+        opponent_captain_email: match.opponent_captain_email,
+        is_home: match.is_home,
+      })
+      setIsEditing(true)
+    }
+  }
+
+  function handleCancelEdit() {
+    // Reset form to original values
+    if (match) {
+      setEditedMatch({
+        opponent_name: match.opponent_name,
+        date: match.date,
+        time: match.time,
+        duration: (match as any).duration || null,
+        venue: match.venue,
+        venue_address: match.venue_address,
+        opponent_captain_name: match.opponent_captain_name,
+        opponent_captain_email: match.opponent_captain_email,
+        is_home: match.is_home,
+      })
+    }
+    setIsEditing(false)
+    // Navigate back to previous page (calendar, teams page, etc.)
+    router.back()
+  }
+
+  async function handleSaveChanges() {
+    if (!match) return
+
+    setSaving(true)
+    const supabase = createClient()
+
+    const { error } = await supabase
+      .from('matches')
+      .update({
+        opponent_name: editedMatch.opponent_name,
+        date: editedMatch.date,
+        time: editedMatch.time,
+        duration: editedMatch.duration ? parseInt(editedMatch.duration.toString()) : null,
+        venue: editedMatch.venue || null,
+        venue_address: editedMatch.venue_address || null,
+        opponent_captain_name: editedMatch.opponent_captain_name || null,
+        opponent_captain_email: editedMatch.opponent_captain_email || null,
+        is_home: editedMatch.is_home ?? true,
+      })
+      .eq('id', match.id)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+      setSaving(false)
+    } else {
+      toast({
+        title: 'Match updated',
+        description: 'The match has been updated successfully',
+      })
+      setIsEditing(false)
+      setSaving(false)
+      loadMatchData()
+    }
+  }
+
   if (loading || !match) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -265,39 +367,185 @@ Thank you`)
         <Card>
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">vs {match.opponent_name}</h2>
-              <div className="flex items-center gap-2">
-                <MatchResultBadge 
-                  result={match.match_result as 'win' | 'loss' | 'tie' | 'pending'}
-                  scoreSummary={match.score_summary || undefined}
+              {isEditing ? (
+                <Input
+                  value={editedMatch.opponent_name || ''}
+                  onChange={(e) => setEditedMatch({ ...editedMatch, opponent_name: e.target.value })}
+                  className="text-lg font-semibold"
+                  placeholder="Opponent name"
                 />
-                <Badge variant={match.is_home ? 'default' : 'outline'}>
-                  {match.is_home ? 'Home' : 'Away'}
-                </Badge>
-              </div>
+              ) : (
+                <h2 className="text-lg font-semibold">vs {match.opponent_name}</h2>
+              )}
+              {!isEditing && (
+                <div className="flex items-center gap-2">
+                  <MatchResultBadge 
+                    result={match.match_result as 'win' | 'loss' | 'tie' | 'pending'}
+                    scoreSummary={match.score_summary || undefined}
+                  />
+                  <Badge variant={match.is_home ? 'default' : 'outline'}>
+                    {match.is_home ? 'Home' : 'Away'}
+                  </Badge>
+                </div>
+              )}
+              {isEditing && (
+                <Select
+                  value={editedMatch.is_home ? 'home' : 'away'}
+                  onValueChange={(value) => setEditedMatch({ ...editedMatch, is_home: value === 'home' })}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="home">Home</SelectItem>
+                    <SelectItem value="away">Away</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
-                {formatDate(match.date, 'EEEE, MMMM d, yyyy')}
+                {isEditing ? (
+                  <Input
+                    type="date"
+                    value={editedMatch.date || ''}
+                    onChange={(e) => setEditedMatch({ ...editedMatch, date: e.target.value })}
+                    className="flex-1"
+                  />
+                ) : (
+                  formatDate(match.date, 'EEEE, MMMM d, yyyy')
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
-                {formatTime(match.time)}
+                {isEditing ? (
+                  <Input
+                    type="time"
+                    value={editedMatch.time || ''}
+                    onChange={(e) => setEditedMatch({ ...editedMatch, time: e.target.value })}
+                    className="flex-1"
+                  />
+                ) : (
+                  formatTime(match.time)
+                )}
               </div>
-              {match.venue && (
+              <div className="flex items-center gap-2">
+                <Timer className="h-4 w-4 text-muted-foreground" />
+                {isEditing ? (
+                  <Input
+                    type="number"
+                    placeholder="Duration (minutes)"
+                    value={editedMatch.duration?.toString() || ''}
+                    onChange={(e) => setEditedMatch({ ...editedMatch, duration: e.target.value ? parseInt(e.target.value) : null })}
+                    className="flex-1"
+                    min="0"
+                  />
+                ) : (
+                  (match as any).duration ? (
+                    <span>
+                      {(() => {
+                        const hours = Math.floor((match as any).duration / 60)
+                        const minutes = (match as any).duration % 60
+                        if (hours > 0 && minutes > 0) {
+                          return `${hours}h ${minutes}m`
+                        } else if (hours > 0) {
+                          return `${hours}h`
+                        } else {
+                          return `${minutes}m`
+                        }
+                      })()}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">No duration set</span>
+                  )
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                {isEditing ? (
+                  <Input
+                    value={editedMatch.venue || ''}
+                    onChange={(e) => setEditedMatch({ ...editedMatch, venue: e.target.value })}
+                    className="flex-1"
+                    placeholder="Venue"
+                  />
+                ) : (
+                  match.venue || <span className="text-muted-foreground">No venue</span>
+                )}
+              </div>
+              {isEditing && (
                 <div className="flex items-center gap-2">
                   <MapPin className="h-4 w-4 text-muted-foreground" />
-                  {match.venue}
+                  <Input
+                    value={editedMatch.venue_address || ''}
+                    onChange={(e) => setEditedMatch({ ...editedMatch, venue_address: e.target.value })}
+                    className="flex-1"
+                    placeholder="Venue address"
+                  />
                 </div>
               )}
-              {match.opponent_captain_name && (
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                  Captain: {match.opponent_captain_name}
-                </div>
+              {isEditing ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                    <Input
+                      value={editedMatch.opponent_captain_name || ''}
+                      onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_name: e.target.value })}
+                      className="flex-1"
+                      placeholder="Opponent captain name"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="email"
+                      value={editedMatch.opponent_captain_email || ''}
+                      onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_email: e.target.value })}
+                      className="flex-1"
+                      placeholder="Opponent captain email"
+                    />
+                  </div>
+                </>
+              ) : (
+                match.opponent_captain_name && (
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                    Captain: {match.opponent_captain_name}
+                  </div>
+                )
               )}
             </div>
+            {isEditing && (
+              <div className="flex gap-2 pt-2 border-t">
+                <Button
+                  onClick={handleSaveChanges}
+                  disabled={saving || !editedMatch.opponent_name || !editedMatch.date || !editedMatch.time}
+                  className="flex-1"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleCancelEdit}
+                  variant="outline"
+                  disabled={saving}
+                  className="flex-1"
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 

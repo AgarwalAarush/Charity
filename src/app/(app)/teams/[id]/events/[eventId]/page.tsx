@@ -31,8 +31,15 @@ import {
   Clock as LateClock,
   Trash2,
   Edit,
-  ChevronDown
+  ChevronDown,
+  Save,
+  XCircle,
+  Loader2,
+  Plus,
+  Timer
 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 interface AttendeeInfo {
   rosterMember: RosterMember
@@ -48,6 +55,9 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true)
   const [isCaptain, setIsCaptain] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editedEvent, setEditedEvent] = useState<Partial<Event>>({})
+  const [saving, setSaving] = useState(false)
   const [myAvailability, setMyAvailability] = useState<Availability | null>(null)
   const [myRosterMemberId, setMyRosterMemberId] = useState<string | null>(null)
   const [attendees, setAttendees] = useState<{
@@ -82,10 +92,6 @@ export default function EventDetailPage() {
     // Note: recurrence_series_id and other recurrence fields may not exist in DB yet
     // They will be added via migration, but the code handles their absence gracefully
 
-    if (eventData) {
-      setEvent(eventData)
-    }
-
     // Check if current user is captain
     const { data: teamData } = await supabase
       .from('teams')
@@ -95,6 +101,19 @@ export default function EventDetailPage() {
 
     if (teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
       setIsCaptain(true)
+    }
+
+    if (eventData) {
+      setEvent(eventData)
+      setEditedEvent({
+        event_name: eventData.event_name,
+        date: eventData.date,
+        time: eventData.time,
+        duration: (eventData as any).duration || null,
+        location: eventData.location,
+        description: eventData.description,
+        event_type: (eventData as any).event_type || null,
+      })
     }
 
     // Get current user's roster member info
@@ -167,6 +186,11 @@ export default function EventDetailPage() {
     }
 
     setLoading(false)
+
+    // Auto-enter edit mode for captains when event loads
+    if (eventData && teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      setIsEditing(true)
+    }
   }
 
   async function handleDelete() {
@@ -281,6 +305,76 @@ export default function EventDetailPage() {
     }
   }
 
+  function handleStartEdit() {
+    if (event) {
+      setEditedEvent({
+        event_name: event.event_name,
+        date: event.date,
+        time: event.time,
+        duration: (event as any).duration || null,
+        location: event.location,
+        description: event.description,
+        event_type: (event as any).event_type || null,
+      })
+      setIsEditing(true)
+    }
+  }
+
+  function handleCancelEdit() {
+    // Reset form to original values
+    if (event) {
+      setEditedEvent({
+        event_name: event.event_name,
+        date: event.date,
+        time: event.time,
+        duration: (event as any).duration || null,
+        location: event.location,
+        description: event.description,
+        event_type: (event as any).event_type || null,
+      })
+    }
+    setIsEditing(false)
+    // Navigate back to previous page (calendar, teams page, etc.)
+    router.back()
+  }
+
+  async function handleSaveChanges() {
+    if (!event) return
+
+    setSaving(true)
+    const supabase = createClient()
+
+    const { error } = await supabase
+      .from('events')
+      .update({
+        event_name: editedEvent.event_name,
+        date: editedEvent.date,
+        time: editedEvent.time,
+        duration: editedEvent.duration ? parseInt(editedEvent.duration.toString()) : null,
+        location: editedEvent.location || null,
+        description: editedEvent.description || null,
+        event_type: editedEvent.event_type || null,
+      })
+      .eq('id', event.id)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+      setSaving(false)
+    } else {
+      toast({
+        title: 'Event updated',
+        description: 'The event has been updated successfully',
+      })
+      setIsEditing(false)
+      setSaving(false)
+      loadEventData()
+    }
+  }
+
   if (loading || !event) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -301,50 +395,159 @@ export default function EventDetailPage() {
         <Card>
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">{event.event_name}</h2>
-              <Badge 
-                variant="secondary" 
-                className={(event as any).event_type ? getEventTypeBadgeClass((event as any).event_type) : ''}
-              >
-                {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
-              </Badge>
+              {isEditing ? (
+                <Input
+                  value={editedEvent.event_name || ''}
+                  onChange={(e) => setEditedEvent({ ...editedEvent, event_name: e.target.value })}
+                  className="text-lg font-semibold"
+                  placeholder="Event name"
+                />
+              ) : (
+                <h2 className="text-lg font-semibold">{event.event_name}</h2>
+              )}
+              {!isEditing && (
+                <Badge 
+                  variant="secondary" 
+                  className={(event as any).event_type ? getEventTypeBadgeClass((event as any).event_type) : ''}
+                >
+                  {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
+                </Badge>
+              )}
+              {isEditing && (
+                <Select
+                  value={editedEvent.event_type || 'none'}
+                  onValueChange={(value) => setEditedEvent({ ...editedEvent, event_type: value === 'none' ? null : value })}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="practice">Practice</SelectItem>
+                    <SelectItem value="warmup">Warmup</SelectItem>
+                    <SelectItem value="fun">Fun</SelectItem>
+                    <SelectItem value="social">Social</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
-                {formatDate(event.date, 'EEEE, MMMM d, yyyy')}
+                {isEditing ? (
+                  <Input
+                    type="date"
+                    value={editedEvent.date || ''}
+                    onChange={(e) => setEditedEvent({ ...editedEvent, date: e.target.value })}
+                    className="flex-1"
+                  />
+                ) : (
+                  formatDate(event.date, 'EEEE, MMMM d, yyyy')
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
-                {formatTime(event.time)}
-                {(event as any).duration && (
-                  <span className="text-muted-foreground">
-                    {(() => {
-                      const hours = Math.floor((event as any).duration / 60)
-                      const minutes = (event as any).duration % 60
-                      if (hours > 0 && minutes > 0) {
-                        return `(${hours}h ${minutes}m)`
-                      } else if (hours > 0) {
-                        return `(${hours}h)`
-                      } else {
-                        return `(${minutes}m)`
-                      }
-                    })()}
-                  </span>
+                {isEditing ? (
+                  <Input
+                    type="time"
+                    value={editedEvent.time || ''}
+                    onChange={(e) => setEditedEvent({ ...editedEvent, time: e.target.value })}
+                    className="flex-1"
+                  />
+                ) : (
+                  formatTime(event.time)
                 )}
               </div>
-              {event.location && (
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-muted-foreground" />
-                  {event.location}
-                </div>
+              <div className="flex items-center gap-2">
+                <Timer className="h-4 w-4 text-muted-foreground" />
+                {isEditing ? (
+                  <Input
+                    type="number"
+                    placeholder="Duration (minutes)"
+                    value={editedEvent.duration?.toString() || ''}
+                    onChange={(e) => setEditedEvent({ ...editedEvent, duration: e.target.value ? parseInt(e.target.value) : null })}
+                    className="flex-1"
+                    min="0"
+                  />
+                ) : (
+                  (event as any).duration ? (
+                    <span>
+                      {(() => {
+                        const hours = Math.floor((event as any).duration / 60)
+                        const minutes = (event as any).duration % 60
+                        if (hours > 0 && minutes > 0) {
+                          return `${hours}h ${minutes}m`
+                        } else if (hours > 0) {
+                          return `${hours}h`
+                        } else {
+                          return `${minutes}m`
+                        }
+                      })()}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">No duration set</span>
+                  )
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                {isEditing ? (
+                  <Input
+                    value={editedEvent.location || ''}
+                    onChange={(e) => setEditedEvent({ ...editedEvent, location: e.target.value })}
+                    className="flex-1"
+                    placeholder="Location"
+                  />
+                ) : (
+                  event.location || <span className="text-muted-foreground">No location</span>
+                )}
+              </div>
+            </div>
+            <div className="pt-2 border-t">
+              {isEditing ? (
+                <Textarea
+                  value={editedEvent.description || ''}
+                  onChange={(e) => setEditedEvent({ ...editedEvent, description: e.target.value })}
+                  placeholder="Event description"
+                  rows={4}
+                />
+              ) : (
+                event.description && (
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                    {event.description}
+                  </p>
+                )
               )}
             </div>
-            {event.description && (
-              <div className="pt-2 border-t">
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                  {event.description}
-                </p>
+            {isEditing && (
+              <div className="flex gap-2 pt-2 border-t">
+                <Button
+                  onClick={handleSaveChanges}
+                  disabled={saving || !editedEvent.event_name || !editedEvent.date || !editedEvent.time}
+                  className="flex-1"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleCancelEdit}
+                  variant="outline"
+                  disabled={saving}
+                  className="flex-1"
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
               </div>
             )}
           </CardContent>
@@ -399,16 +602,26 @@ export default function EventDetailPage() {
         </div>
 
         {/* Captain Actions */}
-        {isCaptain && (
+        {isCaptain && !isEditing && (
           <div className="flex gap-3">
             <Button
               variant="outline"
               className="flex-1"
-              onClick={() => setShowEditDialog(true)}
+              onClick={handleStartEdit}
             >
               <Edit className="h-4 w-4 mr-2" />
               Edit Event
             </Button>
+            {(event as any).recurrence_series_id && (
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowEditDialog(true)}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Series
+              </Button>
+            )}
             <Button
               variant="destructive"
               className="flex-1"
@@ -549,6 +762,22 @@ export default function EventDetailPage() {
                   </div>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Make Recurring Button - only for non-recurring events */}
+        {isCaptain && !isEditing && !(event as any).recurrence_series_id && (
+          <Card>
+            <CardContent className="p-4">
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowEditDialog(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Make Recurring
+              </Button>
             </CardContent>
           </Card>
         )}

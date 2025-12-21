@@ -17,12 +17,13 @@ import {
   getNextWeek,
   formatCalendarDate
 } from '@/lib/calendar-utils'
-import { ChevronLeft, ChevronRight, Filter, Calendar as CalendarIcon } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Filter, Calendar as CalendarIcon, Plus } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WeekView } from '@/components/calendar/week-view'
 import { MonthView } from '@/components/calendar/month-view'
 import { CalendarFilters } from '@/components/calendar/calendar-filters'
+import { AddEventDialog } from '@/components/teams/add-event-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { startOfWeek, addDays } from 'date-fns'
 
@@ -31,6 +32,7 @@ type ViewMode = 'week' | 'month'
 interface TeamInfo {
   id: string
   name: string
+  isCaptain: boolean
 }
 
 export default function CalendarPage() {
@@ -44,6 +46,8 @@ export default function CalendarPage() {
   const [showEvents, setShowEvents] = useState(true)
   const [loading, setLoading] = useState(true)
   const [teamsLoaded, setTeamsLoaded] = useState(false)
+  const [showAddEventDialog, setShowAddEventDialog] = useState(false)
+  const [selectedTeamForEvent, setSelectedTeamForEvent] = useState<string | null>(null)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -74,10 +78,22 @@ export default function CalendarPage() {
       .eq('user_id', user.id)
       .eq('is_active', true)
 
+    // Get teams where user is captain or co-captain
+    const { data: captainTeams } = await supabase
+      .from('teams')
+      .select('id, name, captain_id, co_captain_id')
+      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+
+    // Build a map of team IDs to captain status
+    const captainTeamIds = new Set(
+      captainTeams?.map(t => t.id) || []
+    )
+
     if (rosterData && rosterData.length > 0) {
       const teamsList = rosterData.map((r: any) => ({
         id: r.team_id,
-        name: r.teams.name
+        name: r.teams.name,
+        isCaptain: captainTeamIds.has(r.team_id)
       }))
       setTeams(teamsList)
       // By default, show all teams
@@ -226,6 +242,34 @@ export default function CalendarPage() {
     setCurrentDate(new Date())
   }
 
+  const captainTeams = teams.filter(t => t.isCaptain)
+  const canAddEvents = captainTeams.length > 0
+
+  function handleAddEvent() {
+    if (captainTeams.length === 0) {
+      toast({
+        title: 'No teams available',
+        description: 'You must be a captain or co-captain to add events',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (captainTeams.length === 1) {
+      // Only one team, use it directly
+      setSelectedTeamForEvent(captainTeams[0].id)
+      setShowAddEventDialog(true)
+    } else {
+      // Multiple teams, need to select one
+      // For now, use the first selected team or first captain team
+      const teamToUse = selectedTeamIds.length > 0 && captainTeams.find(t => selectedTeamIds.includes(t.id))
+        ? captainTeams.find(t => selectedTeamIds.includes(t.id))!.id
+        : captainTeams[0].id
+      setSelectedTeamForEvent(teamToUse)
+      setShowAddEventDialog(true)
+    }
+  }
+
   return (
     <div className="flex flex-col min-h-screen pb-16">
       <Header title="Calendar" />
@@ -250,17 +294,9 @@ export default function CalendarPage() {
                   </h2>
                 )}
                 {viewMode === 'week' && (
-                  <Select value={numWeeks.toString()} onValueChange={(value) => setNumWeeks(parseInt(value))}>
-                    <SelectTrigger className="w-32 h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 week</SelectItem>
-                      <SelectItem value="2">2 weeks</SelectItem>
-                      <SelectItem value="3">3 weeks</SelectItem>
-                      <SelectItem value="4">4 weeks</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <h2 className="text-lg font-semibold">
+                    {formatCalendarDate(currentDate, 'MMMM yyyy')}
+                  </h2>
                 )}
               </div>
 
@@ -282,6 +318,16 @@ export default function CalendarPage() {
                 Today
               </Button>
 
+              {canAddEvents && (
+                <Button
+                  size="sm"
+                  onClick={handleAddEvent}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Event
+                </Button>
+              )}
+
               <CalendarFilters
                 teams={teams}
                 selectedTeamIds={selectedTeamIds}
@@ -299,6 +345,24 @@ export default function CalendarPage() {
                 </TabsList>
               </Tabs>
             </div>
+
+            {/* Weeks filter - only shown in week view */}
+            {viewMode === 'week' && (
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-sm text-muted-foreground">View:</span>
+                <Select value={numWeeks.toString()} onValueChange={(value) => setNumWeeks(parseInt(value))}>
+                  <SelectTrigger className="w-32 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 week</SelectItem>
+                    <SelectItem value="2">2 weeks</SelectItem>
+                    <SelectItem value="3">3 weeks</SelectItem>
+                    <SelectItem value="4">4 weeks</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -390,6 +454,24 @@ export default function CalendarPage() {
           <MonthView currentDate={currentDate} items={calendarItems} />
         )}
       </main>
+
+      {selectedTeamForEvent && (
+        <AddEventDialog
+          open={showAddEventDialog}
+          onOpenChange={(open) => {
+            setShowAddEventDialog(open)
+            if (!open) {
+              setSelectedTeamForEvent(null)
+            }
+          }}
+          teamId={selectedTeamForEvent}
+          onAdded={() => {
+            setShowAddEventDialog(false)
+            setSelectedTeamForEvent(null)
+            loadCalendarData()
+          }}
+        />
+      )}
     </div>
   )
 }
