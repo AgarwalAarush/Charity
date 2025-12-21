@@ -14,12 +14,23 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 
 interface Venue {
   id: string
   name: string
   address: string | null
   google_maps_link: string | null
+  region?: string | null
+  is_active?: boolean
+  team_id?: string | null
 }
 
 interface VenueDialogProps {
@@ -40,8 +51,13 @@ export function VenueDialog({
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
   const [googleMapsLink, setGoogleMapsLink] = useState('')
+  const [region, setRegion] = useState('')
+  const [isActive, setIsActive] = useState(true)
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
+  
+  // Check if this is system-level (teamId is empty)
+  const isSystemLevel = !teamId || teamId === ''
 
   // Reset form when dialog opens/closes or venue changes
   useEffect(() => {
@@ -50,10 +66,14 @@ export function VenueDialog({
         setName(venue.name || '')
         setAddress(venue.address || '')
         setGoogleMapsLink(venue.google_maps_link || '')
+        setRegion(venue.region || '')
+        setIsActive(venue.is_active !== false) // Default to true if not set
       } else {
         setName('')
         setAddress('')
         setGoogleMapsLink('')
+        setRegion('')
+        setIsActive(true)
       }
     }
   }, [open, venue])
@@ -77,13 +97,21 @@ export function VenueDialog({
     try {
       if (venue) {
         // Update existing venue
+        const updateData: any = {
+          name: name.trim(),
+          address: address.trim() || null,
+          google_maps_link: googleMapsLink.trim() || null,
+        }
+        
+        // Only include system-level fields if this is a system-level venue
+        if (isSystemLevel) {
+          updateData.region = region.trim() || null
+          updateData.is_active = isActive
+        }
+        
         const { error } = await supabase
           .from('venues')
-          .update({
-            name: name.trim(),
-            address: address.trim() || null,
-            google_maps_link: googleMapsLink.trim() || null,
-          })
+          .update(updateData)
           .eq('id', venue.id)
 
         if (error) {
@@ -103,15 +131,27 @@ export function VenueDialog({
       } else {
         // Create new venue
         const { data: { user } } = await supabase.auth.getUser()
+        const insertData: any = {
+          name: name.trim(),
+          address: address.trim() || null,
+          google_maps_link: googleMapsLink.trim() || null,
+          created_by: user?.id || null,
+        }
+        
+        // Only set team_id if provided (for team-specific venues)
+        if (teamId && teamId !== '') {
+          insertData.team_id = teamId
+        }
+        
+        // Only include system-level fields if this is a system-level venue
+        if (isSystemLevel) {
+          insertData.region = region.trim() || null
+          insertData.is_active = isActive
+        }
+        
         const { error } = await supabase
           .from('venues')
-          .insert({
-            team_id: teamId,
-            name: name.trim(),
-            address: address.trim() || null,
-            google_maps_link: googleMapsLink.trim() || null,
-            created_by: user?.id || null,
-          })
+          .insert(insertData)
 
         if (error) {
           toast({
@@ -186,6 +226,32 @@ export function VenueDialog({
               Paste the full Google Maps URL for this location
             </p>
           </div>
+
+          {isSystemLevel && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="region">Region</Label>
+                <Input
+                  id="region"
+                  placeholder="e.g., Pacific Northwest, Northeast"
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Geographic region for organizing venues
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <Label htmlFor="isActive">Active</Label>
+                <Switch
+                  id="isActive"
+                  checked={isActive}
+                  onCheckedChange={setIsActive}
+                />
+              </div>
+            </>
+          )}
 
           <DialogFooter>
             <Button
