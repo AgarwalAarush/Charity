@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
+import { addDays, addWeeks, format } from 'date-fns'
 
 interface AddEventDialogProps {
   open: boolean
@@ -42,6 +44,11 @@ export function AddEventDialog({
   const [time, setTime] = useState('')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
+  const [isRecurring, setIsRecurring] = useState(false)
+  const [recurrencePattern, setRecurrencePattern] = useState<'daily' | 'weekly' | 'custom'>('weekly')
+  const [endType, setEndType] = useState<'date' | 'occurrences'>('date')
+  const [endDate, setEndDate] = useState('')
+  const [occurrences, setOccurrences] = useState('')
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
 
@@ -51,6 +58,45 @@ export function AddEventDialog({
     setTime('')
     setLocation('')
     setDescription('')
+    setIsRecurring(false)
+    setRecurrencePattern('weekly')
+    setEndType('date')
+    setEndDate('')
+    setOccurrences('')
+  }
+
+  function generateRecurringDates(startDate: string, pattern: 'daily' | 'weekly' | 'custom', endDateStr?: string, numOccurrences?: number): string[] {
+    const dates: string[] = [startDate]
+    const start = new Date(startDate)
+    let current = new Date(start)
+    let count = 1
+
+    if (endDateStr) {
+      const end = new Date(endDateStr)
+      while (current < end) {
+        if (pattern === 'daily') {
+          current = addDays(current, 1)
+        } else if (pattern === 'weekly') {
+          current = addWeeks(current, 1)
+        }
+        // For custom, we'll handle separately if needed
+        if (current <= end) {
+          dates.push(format(current, 'yyyy-MM-dd'))
+        }
+      }
+    } else if (numOccurrences) {
+      while (count < numOccurrences) {
+        if (pattern === 'daily') {
+          current = addDays(current, 1)
+        } else if (pattern === 'weekly') {
+          current = addWeeks(current, 1)
+        }
+        dates.push(format(current, 'yyyy-MM-dd'))
+        count++
+      }
+    }
+
+    return dates
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -63,6 +109,41 @@ export function AddEventDialog({
         variant: 'destructive',
       })
       return
+    }
+
+    if (isRecurring) {
+      if (recurrencePattern === 'custom') {
+        toast({
+          title: 'Error',
+          description: 'Custom recurrence patterns are not yet supported. Please use Daily or Weekly.',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (endType === 'date' && !endDate) {
+        toast({
+          title: 'Error',
+          description: 'Please specify an end date for the recurring event',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (endType === 'occurrences' && (!occurrences || parseInt(occurrences) < 2)) {
+        toast({
+          title: 'Error',
+          description: 'Please specify the number of occurrences (must be at least 2)',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (endType === 'date' && new Date(endDate) < new Date(date)) {
+        toast({
+          title: 'Error',
+          description: 'End date must be after the start date',
+          variant: 'destructive',
+        })
+        return
+      }
     }
 
     setLoading(true)
@@ -98,16 +179,34 @@ export function AddEventDialog({
         return
       }
 
-      const eventData = {
+      // Generate dates for recurring events
+      const dates = isRecurring
+        ? generateRecurringDates(
+            date,
+            recurrencePattern,
+            endType === 'date' ? endDate : undefined,
+            endType === 'occurrences' ? parseInt(occurrences) : undefined
+          )
+        : [date]
+
+      // Create events for each date
+      // Note: Recurrence fields (is_recurring, recurrence_pattern, etc.) will be added
+      // to the database schema in a future migration. For now, we create separate event records.
+      const eventsToCreate = dates.map(eventDate => ({
         team_id: teamId,
         event_name: eventName,
-        date,
+        date: eventDate,
         time,
         location: location || null,
         description: description || null,
-      }
+        // TODO: Add these fields to database schema:
+        // is_recurring: isRecurring,
+        // recurrence_pattern: isRecurring ? recurrencePattern : null,
+        // recurrence_end_date: isRecurring && endType === 'date' ? endDate : null,
+        // recurrence_occurrences: isRecurring && endType === 'occurrences' ? parseInt(occurrences) : null,
+      }))
 
-      const { error } = await supabase.from('events').insert(eventData)
+      const { error } = await supabase.from('events').insert(eventsToCreate)
 
       if (error) {
         toast({
@@ -117,8 +216,10 @@ export function AddEventDialog({
         })
       } else {
         toast({
-          title: 'Event created',
-          description: 'The event has been added successfully',
+          title: isRecurring ? 'Recurring events created' : 'Event created',
+          description: isRecurring 
+            ? `${dates.length} event${dates.length > 1 ? 's' : ''} have been created successfully`
+            : 'The event has been added successfully',
         })
         resetForm()
         onAdded()
@@ -245,6 +346,99 @@ export function AddEventDialog({
               onChange={(e) => setDescription(e.target.value)}
               rows={4}
             />
+          </div>
+
+          {/* Recurring Event Options */}
+          <div className="space-y-4 pt-4 border-t">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="isRecurring"
+                checked={isRecurring}
+                onCheckedChange={(checked) => setIsRecurring(checked === true)}
+              />
+              <Label htmlFor="isRecurring" className="font-normal cursor-pointer">
+                This is a recurring event
+              </Label>
+            </div>
+
+            {isRecurring && (
+              <div className="space-y-4 pl-6 border-l-2">
+                {/* Recurrence Pattern */}
+                <div className="space-y-2">
+                  <Label htmlFor="recurrencePattern">Recurrence Pattern</Label>
+                  <Select
+                    value={recurrencePattern}
+                    onValueChange={(value) => setRecurrencePattern(value as 'daily' | 'weekly' | 'custom')}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* End Type Selection */}
+                <div className="space-y-2">
+                  <Label>End Recurrence</Label>
+                  <Select value={endType} onValueChange={(value) => setEndType(value as 'date' | 'occurrences')}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="date">On a specific date</SelectItem>
+                      <SelectItem value="occurrences">After number of occurrences</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* End Date or Occurrences */}
+                {endType === 'date' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="endDate">
+                      End Date <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="endDate"
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      min={date}
+                      required
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="occurrences">
+                      Number of Occurrences <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="occurrences"
+                      type="number"
+                      min="2"
+                      value={occurrences}
+                      onChange={(e) => setOccurrences(e.target.value)}
+                      placeholder="e.g., 10"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The event will repeat {occurrences ? `${occurrences} times` : 'multiple times'} starting from {date}
+                    </p>
+                  </div>
+                )}
+
+                {recurrencePattern === 'custom' && (
+                  <div className="p-3 bg-muted rounded-md">
+                    <p className="text-sm text-muted-foreground">
+                      Custom recurrence patterns are coming soon. For now, please use Daily or Weekly.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <DialogFooter>
