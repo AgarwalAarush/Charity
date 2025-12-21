@@ -12,6 +12,13 @@ import { Event, RosterMember, Availability } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Calendar,
   Clock,
   MapPin,
@@ -21,7 +28,8 @@ import {
   HelpCircle,
   Clock as LateClock,
   Trash2,
-  Edit
+  Edit,
+  ChevronDown
 } from 'lucide-react'
 
 interface AttendeeInfo {
@@ -37,6 +45,8 @@ export default function EventDetailPage() {
   const [event, setEvent] = useState<Event | null>(null)
   const [loading, setLoading] = useState(true)
   const [isCaptain, setIsCaptain] = useState(false)
+  const [myAvailability, setMyAvailability] = useState<Availability | null>(null)
+  const [myRosterMemberId, setMyRosterMemberId] = useState<string | null>(null)
   const [attendees, setAttendees] = useState<{
     available: AttendeeInfo[]
     unavailable: AttendeeInfo[]
@@ -79,6 +89,31 @@ export default function EventDetailPage() {
 
     if (teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
       setIsCaptain(true)
+    }
+
+    // Get current user's roster member info
+    if (user) {
+      const { data: rosterMember } = await supabase
+        .from('roster_members')
+        .select('id')
+        .eq('team_id', teamId)
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .single()
+
+      if (rosterMember) {
+        setMyRosterMemberId(rosterMember.id)
+
+        // Get user's availability for this event
+        const { data: availability } = await supabase
+          .from('availability')
+          .select('*')
+          .eq('event_id', eventId)
+          .eq('roster_member_id', rosterMember.id)
+          .single()
+
+        setMyAvailability(availability || null)
+      }
     }
 
     // Load roster members and their availability
@@ -155,6 +190,91 @@ export default function EventDetailPage() {
     }
   }
 
+  async function handleRSVPChange(newStatus: string) {
+    if (!myRosterMemberId) return
+
+    const supabase = createClient()
+
+    // Check if availability record exists
+    if (myAvailability) {
+      // Update existing availability
+      const { error } = await supabase
+        .from('availability')
+        .update({
+          status: newStatus,
+          responded_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', myAvailability.id)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    } else {
+      // Create new availability record
+      const { error } = await supabase
+        .from('availability')
+        .insert({
+          roster_member_id: myRosterMemberId,
+          event_id: eventId,
+          status: newStatus,
+          responded_at: new Date().toISOString(),
+        })
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    toast({
+      title: 'RSVP updated',
+      description: 'Your availability has been updated',
+    })
+
+    // Reload data to refresh the UI
+    loadEventData()
+  }
+
+  function getStatusLabel(status: string | undefined) {
+    switch (status) {
+      case 'available':
+        return 'Available'
+      case 'unavailable':
+        return 'Unavailable'
+      case 'maybe':
+        return 'Maybe'
+      case 'late':
+        return 'Running Late'
+      default:
+        return 'Set RSVP'
+    }
+  }
+
+  function getStatusIcon(status: string | undefined) {
+    switch (status) {
+      case 'available':
+        return <Check className="h-4 w-4 text-green-500" />
+      case 'unavailable':
+        return <X className="h-4 w-4 text-red-500" />
+      case 'maybe':
+        return <HelpCircle className="h-4 w-4 text-yellow-500" />
+      case 'late':
+        return <LateClock className="h-4 w-4 text-orange-500" />
+      default:
+        return <ChevronDown className="h-4 w-4" />
+    }
+  }
+
   if (loading || !event) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -212,12 +332,44 @@ export default function EventDetailPage() {
               Availability Grid
             </Button>
           </Link>
-          <Link href={`/events/${eventId}/my-availability`}>
-            <Button variant="outline" className="w-full">
-              <Check className="h-4 w-4 mr-2" />
-              My RSVP
-            </Button>
-          </Link>
+          
+          <Select
+            value={myAvailability?.status || 'unavailable'}
+            onValueChange={handleRSVPChange}
+          >
+            <SelectTrigger className="w-full">
+              <div className="flex items-center gap-2">
+                {getStatusIcon(myAvailability?.status)}
+                <span>{getStatusLabel(myAvailability?.status)}</span>
+              </div>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="available">
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  <span>Available</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="late">
+                <div className="flex items-center gap-2">
+                  <LateClock className="h-4 w-4 text-orange-500" />
+                  <span>Running Late</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="maybe">
+                <div className="flex items-center gap-2">
+                  <HelpCircle className="h-4 w-4 text-yellow-500" />
+                  <span>Maybe</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="unavailable">
+                <div className="flex items-center gap-2">
+                  <X className="h-4 w-4 text-red-500" />
+                  <span>Unavailable</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Captain Actions */}
