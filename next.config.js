@@ -37,6 +37,8 @@ const nextConfig = {
     // your project has type errors.
     ignoreBuildErrors: true,
   },
+  // Add empty turbopack config to silence webpack warning
+  turbopack: {},
   experimental: {
     serverActions: {
       bodySizeLimit: '2mb',
