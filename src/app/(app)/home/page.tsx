@@ -37,6 +37,7 @@ interface UpcomingMatch {
   opponent_name: string
   venue: string | null
   is_home: boolean
+  team_id: string
   team_name: string
   status: 'in_lineup' | 'off' | 'pending'
   partner_name?: string
@@ -251,6 +252,7 @@ export default function HomePage() {
         opponent_name: match.opponent_name,
         venue: match.venue,
         is_home: match.is_home,
+        team_id: match.team_id,
         team_name: (match.teams as { name: string }).name,
         status,
         partner_name: partnerName,
@@ -422,44 +424,46 @@ export default function HomePage() {
           <div className="lg:col-span-2 space-y-4">
         {/* Hero Card - Next Playing */}
         {nextMatch && nextMatch.status === 'in_lineup' ? (
-          <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Next Playing</CardTitle>
-                <Trophy className="h-5 w-5" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4" />
-                  <span className="font-medium">
-                    {formatDate(nextMatch.date, 'EEEE, MMM d')} at {formatTime(nextMatch.time)}
-                  </span>
+          <Link href={`/teams/${nextMatch.team_id}/matches/${nextMatch.id}`}>
+            <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white hover:from-green-600 hover:to-green-700 transition-colors cursor-pointer">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">Next Playing</CardTitle>
+                  <Trophy className="h-5 w-5" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  <span>vs {nextMatch.opponent_name}</span>
-                  <Badge variant="secondary" className="ml-auto bg-white/20 text-white">
-                    {nextMatch.is_home ? 'Home' : 'Away'}
-                  </Badge>
-                </div>
-                {nextMatch.venue && (
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
                   <div className="flex items-center gap-2">
-                    <MapPin className="h-4 w-4" />
-                    <span className="text-sm">{nextMatch.venue}</span>
+                    <Calendar className="h-4 w-4" />
+                    <span className="font-medium">
+                      {formatDate(nextMatch.date, 'EEEE, MMM d')} at {formatTime(nextMatch.time)}
+                    </span>
                   </div>
-                )}
-                {nextMatch.partner_name && (
-                  <div className="pt-2 border-t border-white/20">
-                    <p className="text-sm">
-                      Court {nextMatch.court_slot} with <span className="font-medium">{nextMatch.partner_name}</span>
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    <span>vs {nextMatch.opponent_name}</span>
+                    <Badge variant="secondary" className="ml-auto bg-white/20 text-white">
+                      {nextMatch.is_home ? 'Home' : 'Away'}
+                    </Badge>
                   </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                  {nextMatch.venue && (
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      <span className="text-sm">{nextMatch.venue}</span>
+                    </div>
+                  )}
+                  {nextMatch.partner_name && (
+                    <div className="pt-2 border-t border-white/20">
+                      <p className="text-sm">
+                        Court {nextMatch.court_slot} with <span className="font-medium">{nextMatch.partner_name}</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         ) : (
           <Card>
             <CardHeader>
@@ -488,76 +492,78 @@ export default function HomePage() {
           ) : (
             <div className="space-y-2">
               {upcomingMatches.map((match) => (
-                <Card key={match.id} className="hover:bg-accent/50 transition-colors cursor-pointer">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-medium truncate">
-                            vs {match.opponent_name}
-                          </span>
-                          <Badge variant="outline" className="text-xs shrink-0">
-                            {match.team_name}
-                          </Badge>
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {formatDate(match.date, 'MMM d')} at {formatTime(match.time)}
-                        </div>
-                        {match.venue && (
-                          <div className="text-xs text-muted-foreground mt-1 truncate">
-                            {match.venue}
+                <Link key={match.id} href={`/teams/${match.team_id}/matches/${match.id}`}>
+                  <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-medium truncate">
+                              vs {match.opponent_name}
+                            </span>
+                            <Badge variant="outline" className="text-xs shrink-0">
+                              {match.team_name}
+                            </Badge>
                           </div>
-                        )}
-                      </div>
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <div className="flex items-center gap-1">
-                          {getStatusIcon(match.status)}
-                          <span className="text-xs text-muted-foreground">
-                            {getStatusLabel(match.status)}
-                          </span>
+                          <div className="text-sm text-muted-foreground">
+                            {formatDate(match.date, 'MMM d')} at {formatTime(match.time)}
+                          </div>
+                          {match.venue && (
+                            <div className="text-xs text-muted-foreground mt-1 truncate">
+                              {match.venue}
+                            </div>
+                          )}
                         </div>
-                        <Select
-                          value={match.availability?.status || 'unavailable'}
-                          onValueChange={(value) => updateMatchAvailability(match.id, value as 'available' | 'maybe' | 'unavailable')}
-                        >
-                          <SelectTrigger 
-                            className="h-7 text-xs w-[110px]"
-                            onClick={(e) => e.stopPropagation()}
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <div className="flex items-center gap-1">
+                            {getStatusIcon(match.status)}
+                            <span className="text-xs text-muted-foreground">
+                              {getStatusLabel(match.status)}
+                            </span>
+                          </div>
+                          <Select
+                            value={match.availability?.status || 'unavailable'}
+                            onValueChange={(value) => updateMatchAvailability(match.id, value as 'available' | 'maybe' | 'unavailable')}
                           >
-                            <SelectValue>
-                              <div className="flex items-center gap-1.5">
-                                {getAvailabilityIcon(match.availability?.status || 'unavailable')}
-                                <span className="capitalize">
-                                  {match.availability?.status || 'Unavailable'}
-                                </span>
-                              </div>
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent onClick={(e) => e.stopPropagation()}>
-                            <SelectItem value="available">
-                              <div className="flex items-center gap-2">
-                                <Check className="h-3 w-3 text-green-500" />
-                                <span>Available</span>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="maybe">
-                              <div className="flex items-center gap-2">
-                                <HelpCircle className="h-3 w-3 text-yellow-500" />
-                                <span>Maybe</span>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="unavailable">
-                              <div className="flex items-center gap-2">
-                                <X className="h-3 w-3 text-red-500" />
-                                <span>Unavailable</span>
-                              </div>
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+                            <SelectTrigger 
+                              className="h-7 text-xs w-[110px]"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <SelectValue>
+                                <div className="flex items-center gap-1.5">
+                                  {getAvailabilityIcon(match.availability?.status || 'unavailable')}
+                                  <span className="capitalize">
+                                    {match.availability?.status || 'Unavailable'}
+                                  </span>
+                                </div>
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent onClick={(e) => e.stopPropagation()}>
+                              <SelectItem value="available">
+                                <div className="flex items-center gap-2">
+                                  <Check className="h-3 w-3 text-green-500" />
+                                  <span>Available</span>
+                                </div>
+                              </SelectItem>
+                              <SelectItem value="maybe">
+                                <div className="flex items-center gap-2">
+                                  <HelpCircle className="h-3 w-3 text-yellow-500" />
+                                  <span>Maybe</span>
+                                </div>
+                              </SelectItem>
+                              <SelectItem value="unavailable">
+                                <div className="flex items-center gap-2">
+                                  <X className="h-3 w-3 text-red-500" />
+                                  <span>Unavailable</span>
+                                </div>
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                </Link>
               ))}
             </div>
           )}
