@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Loader2 } from 'lucide-react'
-import { addDays, addWeeks, format } from 'date-fns'
+import { addDays, addWeeks, format, parseISO } from 'date-fns'
 
 interface AddEventDialogProps {
   open: boolean
@@ -67,12 +67,14 @@ export function AddEventDialog({
 
   function generateRecurringDates(startDate: string, pattern: 'daily' | 'weekly' | 'custom', endDateStr?: string, numOccurrences?: number): string[] {
     const dates: string[] = [startDate]
-    const start = new Date(startDate)
+    // Parse the date string properly to avoid timezone issues
+    // parseISO handles 'yyyy-MM-dd' format correctly in local time
+    const start = parseISO(startDate)
     let current = new Date(start)
     let count = 1
 
     if (endDateStr) {
-      const end = new Date(endDateStr)
+      const end = parseISO(endDateStr)
       while (current < end) {
         if (pattern === 'daily') {
           current = addDays(current, 1)
