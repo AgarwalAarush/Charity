@@ -86,7 +86,7 @@ export function calculateMatchAvailability(
 
 // Get all time slots for all days (used for default "available anytime")
 export function getAllTimeSlots(): Record<string, string[]> {
-  const allSlots = generateTimeSlots(6, 22)
+  const allSlots = generateTimeSlots(5, 22) // 5am to 10:30pm (excluding 11pm-5am)
   const defaults: Record<string, string[]> = {}
   
   getAllDays().forEach(day => {

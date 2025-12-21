@@ -11,6 +11,8 @@ import { createClient } from '@/lib/supabase/client'
 import { Event, RosterMember, Availability } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
+import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EditEventDialog } from '@/components/teams/edit-event-dialog'
 import {
   Select,
   SelectContent,
@@ -45,6 +47,7 @@ export default function EventDetailPage() {
   const [event, setEvent] = useState<Event | null>(null)
   const [loading, setLoading] = useState(true)
   const [isCaptain, setIsCaptain] = useState(false)
+  const [showEditDialog, setShowEditDialog] = useState(false)
   const [myAvailability, setMyAvailability] = useState<Availability | null>(null)
   const [myRosterMemberId, setMyRosterMemberId] = useState<string | null>(null)
   const [attendees, setAttendees] = useState<{
@@ -75,6 +78,9 @@ export default function EventDetailPage() {
       .select('*')
       .eq('id', eventId)
       .single()
+    
+    // Note: recurrence_series_id and other recurrence fields may not exist in DB yet
+    // They will be added via migration, but the code handles their absence gracefully
 
     if (eventData) {
       setEvent(eventData)
@@ -296,7 +302,12 @@ export default function EventDetailPage() {
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">{event.event_name}</h2>
-              <Badge variant="secondary">Event</Badge>
+              <Badge 
+                variant="secondary" 
+                className={(event as any).event_type ? getEventTypeBadgeClass((event as any).event_type) : ''}
+              >
+                {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
+              </Badge>
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
@@ -306,6 +317,21 @@ export default function EventDetailPage() {
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
                 {formatTime(event.time)}
+                {(event as any).duration && (
+                  <span className="text-muted-foreground">
+                    {(() => {
+                      const hours = Math.floor((event as any).duration / 60)
+                      const minutes = (event as any).duration % 60
+                      if (hours > 0 && minutes > 0) {
+                        return `(${hours}h ${minutes}m)`
+                      } else if (hours > 0) {
+                        return `(${hours}h)`
+                      } else {
+                        return `(${minutes}m)`
+                      }
+                    })()}
+                  </span>
+                )}
               </div>
               {event.location && (
                 <div className="flex items-center gap-2">
@@ -375,6 +401,14 @@ export default function EventDetailPage() {
         {/* Captain Actions */}
         {isCaptain && (
           <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setShowEditDialog(true)}
+            >
+              <Edit className="h-4 w-4 mr-2" />
+              Edit Event
+            </Button>
             <Button
               variant="destructive"
               className="flex-1"
@@ -519,6 +553,20 @@ export default function EventDetailPage() {
           </Card>
         )}
       </main>
+
+      {/* Edit Event Dialog */}
+      {event && (
+        <EditEventDialog
+          open={showEditDialog}
+          onOpenChange={setShowEditDialog}
+          event={event}
+          teamId={teamId}
+          onUpdated={() => {
+            loadEventData()
+            setShowEditDialog(false)
+          }}
+        />
+      )}
     </div>
   )
 }
