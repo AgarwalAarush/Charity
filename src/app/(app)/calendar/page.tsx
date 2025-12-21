@@ -244,14 +244,14 @@ export default function CalendarPage() {
               </Button>
 
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold">
-                  {viewMode === 'week' 
-                    ? formatCalendarDate(currentDate, 'MMMM yyyy')
-                    : formatCalendarDate(currentDate, 'MMMM yyyy')}
-                </h2>
+                {viewMode === 'month' && (
+                  <h2 className="text-lg font-semibold">
+                    {formatCalendarDate(currentDate, 'MMMM yyyy')}
+                  </h2>
+                )}
                 {viewMode === 'week' && (
                   <Select value={numWeeks.toString()} onValueChange={(value) => setNumWeeks(parseInt(value))}>
-                    <SelectTrigger className="w-24 h-8">
+                    <SelectTrigger className="w-32 h-8">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

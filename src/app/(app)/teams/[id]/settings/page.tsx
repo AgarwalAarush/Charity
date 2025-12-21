@@ -18,7 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Save, Loader2 } from 'lucide-react'
+import { Save, Loader2, Plus, Edit, Trash2, MapPin, ExternalLink } from 'lucide-react'
+import { VenueDialog } from '@/components/teams/venue-dialog'
 
 export default function TeamSettingsPage() {
   const params = useParams()
@@ -27,6 +28,10 @@ export default function TeamSettingsPage() {
   const [team, setTeam] = useState<Team | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [isCaptain, setIsCaptain] = useState(false)
+  const [venues, setVenues] = useState<any[]>([])
+  const [showVenueDialog, setShowVenueDialog] = useState(false)
+  const [editingVenue, setEditingVenue] = useState<any | null>(null)
   const { toast } = useToast()
 
   // Form state
@@ -45,6 +50,7 @@ export default function TeamSettingsPage() {
 
   async function loadTeam() {
     const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
 
     const { data } = await supabase
       .from('teams')
@@ -62,8 +68,55 @@ export default function TeamSettingsPage() {
       setVenueAddress(data.venue_address || '')
       setWarmupPolicy(data.warmup_policy || '')
       setHomePhones(data.home_phones || '')
+
+      // Check if user is captain or co-captain
+      if (user && (data.captain_id === user.id || data.co_captain_id === user.id)) {
+        setIsCaptain(true)
+        loadVenues()
+      }
     }
     setLoading(false)
+  }
+
+  async function loadVenues() {
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('venues')
+      .select('*')
+      .eq('team_id', teamId)
+      .order('name', { ascending: true })
+
+    if (error) {
+      // If table doesn't exist yet, that's okay - user hasn't run migration
+      if (!error.message.includes('does not exist')) {
+        console.error('Error loading venues:', error)
+      }
+      setVenues([])
+    } else {
+      setVenues(data || [])
+    }
+  }
+
+  async function handleDeleteVenue(venueId: string) {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('venues')
+      .delete()
+      .eq('id', venueId)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Venue deleted',
+        description: 'The venue has been removed',
+      })
+      loadVenues()
+    }
   }
 
   async function saveSettings() {
@@ -216,6 +269,93 @@ export default function TeamSettingsPage() {
           )}
           Save Settings
         </Button>
+
+        {/* Venues Management - Only for Captains */}
+        {isCaptain && (
+          <Card>
+            <CardHeader className="p-4 pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Tennis Court Locations</CardTitle>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setEditingVenue(null)
+                    setShowVenueDialog(true)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Venue
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 pt-2">
+              {venues.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No venues added yet. Click "Add Venue" to get started.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {venues.map((venue) => (
+                    <div
+                      key={venue.id}
+                      className="flex items-start justify-between p-3 border rounded-lg"
+                    >
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-4 w-4 text-muted-foreground" />
+                          <h4 className="font-medium">{venue.name}</h4>
+                        </div>
+                        {venue.address && (
+                          <p className="text-sm text-muted-foreground pl-6">
+                            {venue.address}
+                          </p>
+                        )}
+                        {venue.google_maps_link && (
+                          <a
+                            href={venue.google_maps_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-primary hover:underline flex items-center gap-1 pl-6"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            View on Google Maps
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 ml-4">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setEditingVenue(venue)
+                            setShowVenueDialog(true)
+                          }}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteVenue(venue.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <VenueDialog
+          open={showVenueDialog}
+          onOpenChange={setShowVenueDialog}
+          venue={editingVenue}
+          teamId={teamId}
+          onSaved={loadVenues}
+        />
       </main>
     </div>
   )
