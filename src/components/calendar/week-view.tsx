@@ -4,7 +4,7 @@ import { CalendarDay, CalendarItem, getWeekDays, groupItemsByDate, getWeekdayNam
 import { CalendarItemTile } from './calendar-item-tile'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { useState } from 'react'
+import { format } from 'date-fns'
 
 interface WeekViewProps {
   currentDate: Date
@@ -15,84 +15,68 @@ export function WeekView({ currentDate, items }: WeekViewProps) {
   const weekDays = getWeekDays(currentDate)
   const weekdayNames = getWeekdayNames(true)
   const itemsByDate = groupItemsByDate(items)
-  const [expandedDay, setExpandedDay] = useState<string | null>(null)
+
+  // Sort items within each day by time
+  const sortItemsByTime = (items: CalendarItem[]) => {
+    return [...items].sort((a, b) => {
+      // Convert time strings (HH:MM) to comparable numbers
+      const timeA = a.time.replace(':', '')
+      const timeB = b.time.replace(':', '')
+      return timeA.localeCompare(timeB)
+    })
+  }
 
   return (
-    <div className="space-y-2">
-      {/* Week grid */}
-      <div className="grid grid-cols-1 gap-2">
+    <div className="overflow-x-auto pb-2">
+      {/* Week grid - horizontal layout with vertical columns */}
+      <div className="grid grid-cols-7 gap-1 min-w-[700px]">
         {weekDays.map((day, index) => {
-          const dayItems = itemsByDate[day.dateString] || []
-          const visibleItems = expandedDay === day.dateString ? dayItems : dayItems.slice(0, 5)
-          const hasMore = dayItems.length > 5
-          const isExpanded = expandedDay === day.dateString
+          const dayItems = sortItemsByTime(itemsByDate[day.dateString] || [])
 
           return (
             <Card
               key={day.dateString}
               className={cn(
-                'overflow-hidden',
+                'overflow-hidden min-h-[400px] flex flex-col',
                 day.isToday && 'ring-2 ring-primary'
               )}
             >
-              <div className="p-3">
-                {/* Day header */}
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-semibold">
-                      {weekdayNames[index]}
-                    </p>
-                    <p className={cn(
-                      'text-2xl font-bold',
-                      day.isToday && 'text-primary'
-                    )}>
-                      {day.dayOfMonth}
-                    </p>
-                  </div>
-                  
-                  {dayItems.length > 0 && (
-                    <div className="text-xs text-muted-foreground">
-                      {dayItems.length} {dayItems.length === 1 ? 'item' : 'items'}
-                    </div>
-                  )}
-                </div>
+              {/* Day header - fixed at top */}
+              <div className={cn(
+                'p-2 border-b bg-muted/30 text-center',
+                day.isToday && 'bg-primary/10'
+              )}>
+                <p className="text-xs font-semibold text-muted-foreground">
+                  {weekdayNames[index]}
+                </p>
+                <p className={cn(
+                  'text-lg font-bold',
+                  day.isToday && 'text-primary'
+                )}>
+                  {day.dayOfMonth}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {format(day.date, 'MMM')}
+                </p>
+              </div>
 
-                {/* Items */}
-                <div className="space-y-1.5">
-                  {visibleItems.length > 0 ? (
-                    <>
-                      {visibleItems.map(item => (
-                        <CalendarItemTile
-                          key={item.id}
-                          item={item}
-                          compact={false}
-                        />
-                      ))}
-                      
-                      {hasMore && !isExpanded && (
-                        <button
-                          onClick={() => setExpandedDay(day.dateString)}
-                          className="w-full text-xs text-primary hover:underline py-1 text-center"
-                        >
-                          +{dayItems.length - 5} more
-                        </button>
-                      )}
-                      
-                      {isExpanded && hasMore && (
-                        <button
-                          onClick={() => setExpandedDay(null)}
-                          className="w-full text-xs text-primary hover:underline py-1 text-center"
-                        >
-                          Show less
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground text-center py-4">
+              {/* Items - scrollable if needed */}
+              <div className="flex-1 overflow-y-auto p-1.5 space-y-1.5">
+                {dayItems.length > 0 ? (
+                  dayItems.map(item => (
+                    <CalendarItemTile
+                      key={item.id}
+                      item={item}
+                      compact={true}
+                    />
+                  ))
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-xs text-muted-foreground text-center px-1">
                       No events
                     </p>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </Card>
           )
