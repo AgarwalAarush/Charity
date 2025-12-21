@@ -117,8 +117,8 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
     }
 
     // Combine and deduplicate team IDs
-    const rosterTeamIds = rosterTeams?.map(t => t.team_id) || []
-    const captainTeamIds = captainTeams?.map(t => t.id) || []
+    const rosterTeamIds = (rosterTeams as any[])?.map((t: any) => t.team_id) || []
+    const captainTeamIds = (captainTeams as any[])?.map((t: any) => t.id) || []
     const teamIds = [...new Set([...rosterTeamIds, ...captainTeamIds])]
 
     // Build the OR filter
@@ -145,10 +145,10 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
       .select('conversation_id, last_read_at')
       .eq('user_id', user.id)
 
-    const readMap = new Map(reads?.map(r => [r.conversation_id, r.last_read_at]) || [])
+    const readMap = new Map((reads as any[])?.map((r: any) => [r.conversation_id, r.last_read_at]) || [])
     
     // Check if any conversation has messages newer than last read
-    const unread = conversations.some(conv => {
+    const unread = (conversations as any[]).some((conv: any) => {
       const lastRead = readMap.get(conv.id) || '1970-01-01'
       return conv.last_message_at && conv.last_message_at > lastRead
     })
@@ -187,8 +187,8 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
     }
 
     // Combine and deduplicate team IDs
-    const rosterTeamIds = rosterTeams?.map(t => t.team_id) || []
-    const captainTeamIds = captainTeams?.map(t => t.id) || []
+    const rosterTeamIds = (rosterTeams as any[])?.map((t: any) => t.team_id) || []
+    const captainTeamIds = (captainTeams as any[])?.map((t: any) => t.id) || []
     const teamIds = [...new Set([...rosterTeamIds, ...captainTeamIds])]
 
     // Build the OR filter for conversations
@@ -222,10 +222,10 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
       .select('conversation_id, last_read_at')
       .eq('user_id', user.id)
 
-    const readMap = new Map(reads?.map(r => [r.conversation_id, r.last_read_at]) || [])
+    const readMap = new Map((reads as any[])?.map((r: any) => [r.conversation_id, r.last_read_at]) || [])
 
     // For each conversation, get the most recent message
-    const conversationPromises = userConversations.map(async (conv) => {
+    const conversationPromises = (userConversations as any[]).map(async (conv: any) => {
       // Get the most recent message
       const { data: lastMessage } = await supabase
         .from('messages')
@@ -242,7 +242,7 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
 
       if (!lastMessage) return null
 
-      const sender = lastMessage.sender as any
+      const sender = (lastMessage as any).sender as any
       const senderName = sender?.full_name || sender?.email || 'Unknown'
       const initials = senderName
         .split(' ')
@@ -264,7 +264,7 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
           .eq('id', otherUserId)
           .single()
         
-        conversationTitle = otherUser?.full_name || otherUser?.email || 'Direct Message'
+        conversationTitle = (otherUser as any)?.full_name || (otherUser as any)?.email || 'Direct Message'
       }
 
       // Check if unread
@@ -275,8 +275,8 @@ export function Header({ title, showNotifications = true }: HeaderProps) {
         conversation_id: conv.id,
         conversation_kind: conv.kind,
         conversation_title: conversationTitle,
-        last_message: lastMessage.body,
-        last_message_time: lastMessage.created_at,
+        last_message: (lastMessage as any).body,
+        last_message_time: (lastMessage as any).created_at,
         sender_name: senderName,
         sender_initials: initials,
         unread: isUnread

@@ -63,8 +63,8 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
 
     if (!existingProfile) {
       // Create profile if it doesn't exist
-      const { error: profileError } = await supabase
-        .from('profiles')
+      const { error: profileError } = await (supabase
+        .from('profiles') as any)
         .insert({
           id: user.id,
           email: user.email!,
@@ -82,7 +82,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
       }
     }
 
-    const { error } = await supabase.from('teams').insert({
+    const { error } = await (supabase.from('teams') as any).insert({
       name,
       captain_id: user.id,
       league_format: leagueFormat,

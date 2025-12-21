@@ -92,7 +92,7 @@ export function ScoreEntryDialog({
     setLineups(lineupsData as any[])
 
     // Load existing scores if any
-    const lineupIds = lineupsData.map(l => l.id)
+    const lineupIds = (lineupsData as any[]).map((l: any) => l.id)
     const { data: existingScores } = await supabase
       .from('match_scores')
       .select('*')
@@ -100,7 +100,7 @@ export function ScoreEntryDialog({
 
     if (existingScores && existingScores.length > 0) {
       const scoresMap = new Map<string, MatchScore[]>()
-      existingScores.forEach(score => {
+      ;(existingScores as any[]).forEach((score: any) => {
         const existing = scoresMap.get(score.lineup_id) || []
         scoresMap.set(score.lineup_id, [...existing, score as MatchScore])
       })
@@ -189,8 +189,8 @@ export function ScoreEntryDialog({
         return
       }
 
-      const { error: scoresError } = await supabase
-        .from('match_scores')
+      const { error: scoresError } = await (supabase
+        .from('match_scores') as any)
         .insert(allScores.map(s => ({
           lineup_id: s.lineup_id,
           set_number: s.set_number,
@@ -215,8 +215,8 @@ export function ScoreEntryDialog({
       const { courtsWon, courtsLost, result } = calculateCurrentResult()
       const scoreSummary = `${courtsWon}-${courtsLost}`
 
-      const { error: matchError } = await supabase
-        .from('matches')
+      const { error: matchError } = await (supabase
+        .from('matches') as any)
         .update({
           match_result: result,
           score_summary: scoreSummary,

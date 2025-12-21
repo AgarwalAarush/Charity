@@ -50,7 +50,7 @@ export default function RosterPage() {
       .slice(0, 2)
   }
 
-  const getRoleBadge = (role: string) => {
+  const getRoleBadge = (role: string | null) => {
     switch (role) {
       case 'captain':
         return <Badge variant="default" className="text-xs"><Crown className="h-3 w-3 mr-1" />Captain</Badge>

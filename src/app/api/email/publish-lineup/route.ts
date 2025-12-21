@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       player2: RosterMember | null
     }> = []
 
-    lineups?.forEach(lineup => {
+    ;(lineups as any[])?.forEach((lineup: any) => {
       if (lineup.player1_id) playersInLineup.add(lineup.player1_id)
       if (lineup.player2_id) playersInLineup.add(lineup.player2_id)
 
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
     const emailResults: Array<{ email: string; success: boolean; error?: string }> = []
 
     // Send emails to players in lineup
-    for (const lineup of lineups || []) {
+    for (const lineup of (lineups as any[]) || []) {
       const player1 = lineup.player1 as RosterMember | null
       const player2 = lineup.player2 as RosterMember | null
 
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
 
         // Log email - use 'pending' if in dev mode (no API key), otherwise use 'sent' or 'failed'
         const isDevMode = result.error?.includes('development mode')
-        await supabase.from('email_logs').insert({
+        await (supabase.from('email_logs') as any).insert({
           match_id: matchId,
           team_id: teamId,
           type: 'lineup_playing',
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
 
         // Log email - use 'pending' if in dev mode (no API key), otherwise use 'sent' or 'failed'
         const isDevMode = result.error?.includes('development mode')
-        await supabase.from('email_logs').insert({
+        await (supabase.from('email_logs') as any).insert({
           match_id: matchId,
           team_id: teamId,
           type: 'lineup_playing',
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send emails to players on bench
-    const benchPlayers = roster.filter(p => !playersInLineup.has(p.id))
+    const benchPlayers = (roster as any[]).filter((p: any) => !playersInLineup.has(p.id))
 
     for (const player of benchPlayers) {
       if (!player.email) continue
@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
         team,
         player,
         lineupSummary,
-        captainNames: team.name,
+        captainNames: (team as any).name,
       })
 
       const result = await EmailService.send(emailData)
@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
 
       // Log email - use 'pending' if in dev mode (no API key), otherwise use 'sent' or 'failed'
       const isDevMode = result.error?.includes('development mode')
-      await supabase.from('email_logs').insert({
+      await (supabase.from('email_logs') as any).insert({
         match_id: matchId,
         team_id: teamId,
         type: 'lineup_bench',

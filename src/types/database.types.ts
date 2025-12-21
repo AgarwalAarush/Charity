@@ -1063,4 +1063,5 @@ export type MatchScore = Tables<'match_scores'>
 export type Conversation = Tables<'conversations'>
 export type Message = Tables<'messages'>
 export type TeamInvitation = Tables<'team_invitations'>
+export type CourtReservation = Tables<'court_reservations'>
 

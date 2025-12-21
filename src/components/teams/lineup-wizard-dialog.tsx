@@ -64,7 +64,7 @@ export function LineupWizardDialog({
         // Mock statistics - in production, fetch from pair_statistics table
         const winPct = Math.random() * 100
         const gamesPct = Math.random() * 100
-        const fairPlay = (player1.fair_play_score + player2.fair_play_score) / 2
+        const fairPlay = ((player1.fair_play_score ?? 0) + (player2.fair_play_score ?? 0)) / 2
 
         // Calculate weighted score
         // (Win % * 0.4) + (Games % * 0.3) + (FairPlay * 0.3)

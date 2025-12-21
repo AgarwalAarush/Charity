@@ -72,13 +72,13 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
       .maybeSingle()
 
     if (profile) {
-      setFoundUser(profile)
+      setFoundUser(profile as any)
       // Pre-fill fields with user data
-      if (profile.full_name && !fullName) {
-        setFullName(profile.full_name)
+      if ((profile as any).full_name && !fullName) {
+        setFullName((profile as any).full_name)
       }
-      if (profile.ntrp_rating && !ntrpRating) {
-        setNtrpRating(profile.ntrp_rating.toString())
+      if ((profile as any).ntrp_rating && !ntrpRating) {
+        setNtrpRating((profile as any).ntrp_rating.toString())
       }
     } else {
       setFoundUser(null)
@@ -145,8 +145,8 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
       }
 
       // Create invitation
-      const { error: inviteError } = await supabase
-        .from('team_invitations')
+      const { error: inviteError } = await (supabase
+        .from('team_invitations') as any)
         .insert({
           team_id: teamId,
           inviter_id: user.id,
@@ -177,7 +177,7 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
       }
     } else {
       // Fall back to adding as non-user roster member
-      const { error } = await supabase.from('roster_members').insert({
+      const { error } = await (supabase.from('roster_members') as any).insert({
         team_id: teamId,
         full_name: fullName,
         email: email || null,

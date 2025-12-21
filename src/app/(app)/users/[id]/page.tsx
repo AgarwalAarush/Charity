@@ -76,10 +76,10 @@ export default function UserProfilePage() {
       .eq('user_id', userId)
       .eq('is_active', true)
 
-    const otherTeamIds = new Set(otherUserTeams?.map(t => t.team_id) || [])
-    const shared = currentUserTeams
-      ?.filter(t => otherTeamIds.has(t.team_id))
-      .map(t => t.teams)
+    const otherTeamIds = new Set((otherUserTeams as any[])?.map((t: any) => t.team_id) || [])
+    const shared = (currentUserTeams as any[])
+      ?.filter((t: any) => otherTeamIds.has(t.team_id))
+      .map((t: any) => t.teams)
       .filter(Boolean) as Team[] || []
 
     setSharedTeams(shared)
@@ -106,13 +106,13 @@ export default function UserProfilePage() {
       .maybeSingle()
 
     if (existingConv) {
-      router.push(`/messages/${existingConv.id}`)
+      router.push(`/messages/${(existingConv as any).id}`)
       return
     }
 
     // Create new DM conversation
-    const { data: newConv, error } = await supabase
-      .from('conversations')
+    const { data: newConv, error } = await (supabase
+      .from('conversations') as any)
       .insert({
         kind: 'dm',
         dm_user1: user1,

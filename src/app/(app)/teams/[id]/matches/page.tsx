@@ -36,7 +36,7 @@ export default function MatchesPage() {
     const { data: rosterCheck } = await supabase
       .from('roster_members')
       .select('*')
-      .eq('user_id', user?.id)
+      .eq('user_id', user?.id as string)
       .eq('team_id', teamId)
     console.log('3. Roster membership for this team:', rosterCheck)
 
@@ -44,7 +44,7 @@ export default function MatchesPage() {
     const { data: allRoster } = await supabase
       .from('roster_members')
       .select('team_id, role')
-      .eq('user_id', user?.id)
+      .eq('user_id', user?.id as string)
     console.log('4. All your roster memberships:', allRoster)
 
     // Try to load matches

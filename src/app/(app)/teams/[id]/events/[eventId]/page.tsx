@@ -87,7 +87,7 @@ export default function EventDetailPage() {
       .eq('id', teamId)
       .single()
 
-    if (teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+    if (teamData && user && ((teamData as any).captain_id === user.id || (teamData as any).co_captain_id === user.id)) {
       setIsCaptain(true)
     }
 
@@ -102,17 +102,17 @@ export default function EventDetailPage() {
         .single()
 
       if (rosterMember) {
-        setMyRosterMemberId(rosterMember.id)
+        setMyRosterMemberId((rosterMember as any).id)
 
         // Get user's availability for this event
         const { data: availability } = await supabase
           .from('availability')
           .select('*')
           .eq('event_id', eventId)
-          .eq('roster_member_id', rosterMember.id)
+          .eq('roster_member_id', (rosterMember as any).id)
           .single()
 
-        setMyAvailability(availability || null)
+        setMyAvailability((availability as any) || null)
       }
     }
 
@@ -132,7 +132,7 @@ export default function EventDetailPage() {
     if (rosterMembers && availabilities) {
       // Create a map of availability by roster member id
       const availMap = new Map<string, Availability>()
-      availabilities.forEach(a => availMap.set(a.roster_member_id, a))
+      ;(availabilities as any[]).forEach((a: any) => availMap.set(a.roster_member_id, a))
 
       // Group attendees by status
       const grouped = {
@@ -142,10 +142,10 @@ export default function EventDetailPage() {
         late: [] as AttendeeInfo[]
       }
 
-      rosterMembers.forEach(member => {
+      ;(rosterMembers as any[]).forEach((member: any) => {
         const avail = availMap.get(member.id) || null
         const info = { rosterMember: member, availability: avail }
-        
+
         if (!avail || avail.status === 'unavailable') {
           grouped.unavailable.push(info)
         } else if (avail.status === 'available') {
@@ -198,8 +198,8 @@ export default function EventDetailPage() {
     // Check if availability record exists
     if (myAvailability) {
       // Update existing availability
-      const { error } = await supabase
-        .from('availability')
+      const { error } = await (supabase
+        .from('availability') as any)
         .update({
           status: newStatus,
           responded_at: new Date().toISOString(),
@@ -217,8 +217,8 @@ export default function EventDetailPage() {
       }
     } else {
       // Create new availability record
-      const { error } = await supabase
-        .from('availability')
+      const { error } = await (supabase
+        .from('availability') as any)
         .insert({
           roster_member_id: myRosterMemberId,
           event_id: eventId,

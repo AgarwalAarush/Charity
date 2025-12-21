@@ -82,13 +82,13 @@ export default function MatchDetailPage() {
       .single()
 
     if (matchData) {
-      setMatch(matchData)
-      setWarmupStatus(matchData.warm_up_status)
-      setWarmupTime(matchData.warm_up_time || '')
-      setWarmupCourt(matchData.warm_up_court || '')
+      setMatch(matchData as any)
+      setWarmupStatus((matchData as any).warm_up_status)
+      setWarmupTime((matchData as any).warm_up_time || '')
+      setWarmupCourt((matchData as any).warm_up_court || '')
 
-      if (matchData.checklist_status) {
-        const status = matchData.checklist_status as Record<string, boolean>
+      if ((matchData as any).checklist_status) {
+        const status = (matchData as any).checklist_status as Record<string, boolean>
         setChecklist(prev =>
           prev.map(item => ({
             ...item,
@@ -105,10 +105,10 @@ export default function MatchDetailPage() {
       .single()
 
     if (teamData) {
-      setTeam(teamData)
-      
+      setTeam(teamData as any)
+
       // Check if current user is captain or co-captain
-      if (user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      if (user && ((teamData as any).captain_id === user.id || (teamData as any).co_captain_id === user.id)) {
         setIsCaptain(true)
       }
     }
@@ -138,7 +138,7 @@ export default function MatchDetailPage() {
     if (!lineups || lineups.length === 0) return
 
     // Get scores for these lineups
-    const lineupIds = lineups.map(l => l.id)
+    const lineupIds = (lineups as any[]).map((l: any) => l.id)
     const { data: scores } = await supabase
       .from('match_scores')
       .select('*')
@@ -149,13 +149,13 @@ export default function MatchDetailPage() {
     if (scores && scores.length > 0) {
       // Group scores by lineup
       const scoresByLineup = new Map()
-      scores.forEach(score => {
+      ;(scores as any[]).forEach((score: any) => {
         const existing = scoresByLineup.get(score.lineup_id) || []
         scoresByLineup.set(score.lineup_id, [...existing, score])
       })
 
       // Combine lineups with their scores
-      const courtsWithScores = lineups.map(lineup => ({
+      const courtsWithScores = (lineups as any[]).map((lineup: any) => ({
         court_slot: lineup.court_slot,
         player1: lineup.player1,
         player2: lineup.player2,
@@ -169,8 +169,8 @@ export default function MatchDetailPage() {
   async function updateWarmup() {
     const supabase = createClient()
 
-    const { error } = await supabase
-      .from('matches')
+    const { error } = await (supabase
+      .from('matches') as any)
       .update({
         warm_up_status: warmupStatus,
         warm_up_time: warmupStatus === 'booked' ? warmupTime : null,
@@ -202,8 +202,8 @@ export default function MatchDetailPage() {
     })
 
     const supabase = createClient()
-    await supabase
-      .from('matches')
+    await (supabase
+      .from('matches') as any)
       .update({ checklist_status: status })
       .eq('id', matchId)
 

@@ -67,9 +67,9 @@ export default function CalendarPage() {
       .eq('is_active', true)
 
     if (rosterData) {
-      const teamsList = rosterData.map(r => ({
+      const teamsList = rosterData.map((r: any) => ({
         id: r.team_id,
-        name: (r.teams as any).name
+        name: r.teams.name
       }))
       setTeams(teamsList)
       // By default, show all teams
@@ -166,7 +166,7 @@ export default function CalendarPage() {
       const { data: availability } = await supabase
         .from('availability')
         .select('*')
-        .eq('roster_member_id', rosterMember.id)
+        .eq('roster_member_id', (rosterMember as any).id)
 
       if (availability) {
         // Map availability to items

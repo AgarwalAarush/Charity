@@ -41,8 +41,8 @@ export default function TeamsPage() {
       .eq('user_id', user.id)
 
     const allTeams = [
-      ...(captainTeams || []),
-      ...(memberTeams?.map(m => m.teams).filter(Boolean) as Team[] || [])
+      ...((captainTeams as Team[]) || []),
+      ...((memberTeams as any[])?.map((m: any) => m.teams).filter(Boolean) as Team[] || [])
     ]
 
     // Remove duplicates

@@ -271,7 +271,7 @@ export default function LineupBuilderPage() {
       .single()
 
     if (teamData) {
-      setRatingLimit(teamData.rating_limit)
+      setRatingLimit((teamData as any).rating_limit)
     }
 
     // Load roster
@@ -295,15 +295,15 @@ export default function LineupBuilderPage() {
       .order('court_slot')
 
     // Map availability to players
-    const playersWithAvail: PlayerWithAvailability[] = (roster || []).map(player => ({
+    const playersWithAvail: PlayerWithAvailability[] = ((roster as any[]) || []).map((player: any) => ({
       ...player,
-      availability: availabilityData?.find(a => a.roster_member_id === player.id)?.status,
+      availability: (availabilityData as any[])?.find((a: any) => a.roster_member_id === player.id)?.status,
     }))
 
     // Build courts from existing lineup
     const assignedPlayerIds = new Set<string>()
     const newCourts: CourtSlot[] = [1, 2, 3].map(num => {
-      const lineup = lineupData?.find(l => l.court_slot === num)
+      const lineup = (lineupData as any[])?.find((l: any) => l.court_slot === num)
       const player1 = lineup?.player1_id
         ? playersWithAvail.find(p => p.id === lineup.player1_id) || null
         : null
@@ -441,15 +441,15 @@ export default function LineupBuilderPage() {
 
     for (const court of courts) {
       if (court.lineupId) {
-        await supabase
-          .from('lineups')
+        await (supabase
+          .from('lineups') as any)
           .update({
             player1_id: court.player1?.id || null,
             player2_id: court.player2?.id || null,
           })
           .eq('id', court.lineupId)
       } else if (court.player1 || court.player2) {
-        await supabase.from('lineups').insert({
+        await (supabase.from('lineups') as any).insert({
           match_id: matchId,
           court_slot: court.courtNumber,
           player1_id: court.player1?.id || null,
@@ -472,8 +472,8 @@ export default function LineupBuilderPage() {
     for (const court of courts) {
       if (court.player1 || court.player2) {
         if (court.lineupId) {
-          await supabase
-            .from('lineups')
+          await (supabase
+            .from('lineups') as any)
             .update({
               player1_id: court.player1?.id || null,
               player2_id: court.player2?.id || null,
@@ -481,7 +481,7 @@ export default function LineupBuilderPage() {
             })
             .eq('id', court.lineupId)
         } else {
-          await supabase.from('lineups').insert({
+          await (supabase.from('lineups') as any).insert({
             match_id: matchId,
             court_slot: court.courtNumber,
             player1_id: court.player1?.id || null,

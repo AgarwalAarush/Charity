@@ -65,13 +65,13 @@ export default function EventAvailabilityPage() {
       return
     }
 
-    setEvent(eventData)
+    setEvent(eventData as Event)
 
     // Get roster member ID
     const { data: rosterMember } = await supabase
       .from('roster_members')
       .select('id')
-      .eq('team_id', eventData.team_id)
+      .eq('team_id', (eventData as any).team_id)
       .eq('user_id', user.id)
       .maybeSingle()
 
@@ -84,13 +84,13 @@ export default function EventAvailabilityPage() {
     const { data: eventAvail } = await supabase
       .from('availability')
       .select('status')
-      .eq('roster_member_id', rosterMember.id)
+      .eq('roster_member_id', (rosterMember as any).id)
       .eq('event_id', eventId)
       .maybeSingle()
 
     if (eventAvail) {
       // User has already set event availability (or it was auto-initialized)
-      setStatus(eventAvail.status as 'available' | 'unavailable' | 'maybe' | 'late')
+      setStatus((eventAvail as any).status as 'available' | 'unavailable' | 'maybe' | 'late')
       setAutoCalculated(false)
     } else {
       // Fallback: Auto-calculate from defaults if availability wasn't initialized
@@ -101,9 +101,9 @@ export default function EventAvailabilityPage() {
         .single()
 
       const calculatedStatus = calculateMatchAvailability(
-        eventData.date,
-        eventData.time,
-        profile?.availability_defaults as Record<string, string[]> | null | undefined
+        (eventData as any).date,
+        (eventData as any).time,
+        (profile as any)?.availability_defaults as Record<string, string[]> | null | undefined
       )
       setStatus(calculatedStatus)
       setAutoCalculated(true)
@@ -151,22 +151,22 @@ export default function EventAvailabilityPage() {
     const { data: existing } = await supabase
       .from('availability')
       .select('id')
-      .eq('roster_member_id', rosterMember.id)
+      .eq('roster_member_id', (rosterMember as any).id)
       .eq('event_id', eventId)
       .maybeSingle()
 
     let error = null
     if (existing) {
-      const result = await supabase
-        .from('availability')
+      const result = await (supabase
+        .from('availability') as any)
         .update({ status })
-        .eq('id', existing.id)
+        .eq('id', (existing as any).id)
       error = result.error
     } else {
-      const result = await supabase
-        .from('availability')
+      const result = await (supabase
+        .from('availability') as any)
         .insert({
-          roster_member_id: rosterMember.id,
+          roster_member_id: (rosterMember as any).id,
           event_id: eventId,
           status
         })

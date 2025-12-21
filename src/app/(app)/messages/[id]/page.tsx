@@ -86,26 +86,26 @@ export default function ConversationPage() {
       return
     }
 
-    setConversation(conv)
+    setConversation(conv as Conversation)
 
     // Set title based on conversation type
-    if (conv.kind === 'team') {
+    if ((conv as any).kind === 'team') {
       const { data: team } = await supabase
         .from('teams')
         .select('name')
-        .eq('id', conv.team_id)
+        .eq('id', (conv as any).team_id)
         .single()
 
-      setConversationTitle(team?.name || 'Team Chat')
-    } else if (conv.kind === 'dm') {
-      const otherUserId = conv.dm_user1 === user.id ? conv.dm_user2 : conv.dm_user1
+      setConversationTitle((team as any)?.name || 'Team Chat')
+    } else if ((conv as any).kind === 'dm') {
+      const otherUserId = (conv as any).dm_user1 === user.id ? (conv as any).dm_user2 : (conv as any).dm_user1
       const { data: otherUser } = await supabase
         .from('profiles')
         .select('full_name, email')
         .eq('id', otherUserId)
         .single()
 
-      setConversationTitle(otherUser?.full_name || otherUser?.email || 'Direct Message')
+      setConversationTitle((otherUser as any)?.full_name || (otherUser as any)?.email || 'Direct Message')
     }
 
     // Load messages
@@ -132,7 +132,7 @@ export default function ConversationPage() {
           const { data: sender } = await supabase
             .from('profiles')
             .select('*')
-            .eq('id', newMessage.sender_id)
+            .eq('id', newMessage.sender_id as string)
             .maybeSingle()
 
           // Add message only if it doesn't already exist
@@ -164,15 +164,15 @@ export default function ConversationPage() {
 
     if (msgs) {
       // Load sender profiles
-      const senderIds = [...new Set(msgs.map(m => m.sender_id).filter(Boolean))] as string[]
+      const senderIds = [...new Set((msgs as any[]).map((m: any) => m.sender_id).filter(Boolean))] as string[]
       const { data: senders } = await supabase
         .from('profiles')
         .select('*')
         .in('id', senderIds)
 
-      const sendersMap = new Map(senders?.map(s => [s.id, s]) || [])
+      const sendersMap = new Map((senders as any[])?.map((s: any) => [s.id, s]) || [])
 
-      const messagesWithSenders = msgs.map(msg => ({
+      const messagesWithSenders = (msgs as any[]).map((msg: any) => ({
         ...msg,
         sender: msg.sender_id ? sendersMap.get(msg.sender_id) : undefined,
       }))
@@ -213,8 +213,8 @@ export default function ConversationPage() {
     setMessageBody('')
 
     // Insert into database
-    const { data, error } = await supabase
-      .from('messages')
+    const { data, error } = await (supabase
+      .from('messages') as any)
       .insert({
         conversation_id: conversationId,
         sender_id: currentUserId,
@@ -257,8 +257,8 @@ export default function ConversationPage() {
   async function markAsRead() {
     const supabase = createClient()
 
-    await supabase
-      .from('conversation_reads')
+    await (supabase
+      .from('conversation_reads') as any)
       .upsert({
         conversation_id: conversationId,
         user_id: currentUserId,

@@ -73,7 +73,7 @@ ${team.name}`
     const { match, team, player, partner, courtSlot } = data
 
     const warmupMessage = getWarmupMessage(
-      match.warm_up_status,
+      (match.warm_up_status as any) || 'none_yet',
       match.warm_up_time,
       match.warm_up_court
     )
@@ -118,7 +118,7 @@ ${team.name}`
     const { match, team, player, lineupSummary, captainNames } = data
 
     const warmupMessage = getWarmupMessage(
-      match.warm_up_status,
+      (match.warm_up_status as any) || 'none_yet',
       match.warm_up_time,
       match.warm_up_court
     )

@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
 import './globals.css'
 import { Toaster } from '@/components/ui/toaster'
 
-const inter = Inter({ subsets: ['latin'] })
+// Use system font stack instead of Google Fonts to avoid build issues
+const fontClass = 'font-sans'
 
 export const metadata: Metadata = {
   title: 'TennisLife',
@@ -40,7 +40,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
       </head>
-      <body className={inter.className}>
+      <body className={fontClass}>
         {children}
         <Toaster />
       </body>

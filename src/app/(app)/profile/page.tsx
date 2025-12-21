@@ -63,12 +63,12 @@ export default function ProfilePage() {
       .single()
 
     if (profileData) {
-      setProfile(profileData)
-      setFullName(profileData.full_name || '')
-      setPhone(profileData.phone || '')
-      setNtrpRating(profileData.ntrp_rating?.toString() || '')
+      setProfile(profileData as Profile)
+      setFullName((profileData as any).full_name || '')
+      setPhone((profileData as any).phone || '')
+      setNtrpRating((profileData as any).ntrp_rating?.toString() || '')
       setAvailabilityDefaults(
-        (profileData.availability_defaults as Record<string, boolean>) || {}
+        ((profileData as any).availability_defaults as Record<string, boolean>) || {}
       )
     }
 
@@ -91,8 +91,8 @@ export default function ProfilePage() {
       .eq('user_id', user.id)
 
     if (rosters && rosters.length > 0) {
-      const rosterIds = rosters.map(r => r.id)
-      
+      const rosterIds = (rosters as any[]).map((r: any) => r.id)
+
       const { data: statsData } = await supabase
         .from('individual_statistics')
         .select('*')
@@ -100,8 +100,8 @@ export default function ProfilePage() {
 
       if (statsData) {
         // Combine stats with team names
-        const statsWithTeams = statsData.map(stat => {
-          const roster = rosters.find(r => r.id === stat.player_id)
+        const statsWithTeams = (statsData as any[]).map((stat: any) => {
+          const roster = (rosters as any[]).find((r: any) => r.id === stat.player_id)
           return {
             ...stat,
             team_name: roster?.teams?.name || 'Unknown Team',
@@ -119,8 +119,8 @@ export default function ProfilePage() {
     setSaving(true)
 
     const supabase = createClient()
-    const { error } = await supabase
-      .from('profiles')
+    const { error } = await (supabase
+      .from('profiles') as any)
       .update({
         full_name: fullName,
         phone: phone || null,

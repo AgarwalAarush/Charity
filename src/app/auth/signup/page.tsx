@@ -59,8 +59,8 @@ export default function SignUpPage() {
       if (!existingProfile) {
         // Create profile if trigger didn't run
         console.log('Profile not found, creating manually...')
-        const { error: profileError } = await supabase
-          .from('profiles')
+        const { error: profileError } = await (supabase
+          .from('profiles') as any)
           .insert({
             id: data.user.id,
             email: data.user.email!,

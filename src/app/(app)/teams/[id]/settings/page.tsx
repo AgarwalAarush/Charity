@@ -53,15 +53,15 @@ export default function TeamSettingsPage() {
       .single()
 
     if (data) {
-      setTeam(data)
-      setName(data.name)
-      setLeagueFormat(data.league_format)
-      setSeason(data.season || '')
-      setRatingLimit(data.rating_limit?.toString() || '')
-      setFeePerTeam(data.fee_per_team?.toString() || '')
-      setVenueAddress(data.venue_address || '')
-      setWarmupPolicy(data.warmup_policy || '')
-      setHomePhones(data.home_phones || '')
+      setTeam(data as any)
+      setName((data as any).name)
+      setLeagueFormat((data as any).league_format)
+      setSeason((data as any).season || '')
+      setRatingLimit((data as any).rating_limit?.toString() || '')
+      setFeePerTeam((data as any).fee_per_team?.toString() || '')
+      setVenueAddress((data as any).venue_address || '')
+      setWarmupPolicy((data as any).warmup_policy || '')
+      setHomePhones((data as any).home_phones || '')
     }
     setLoading(false)
   }
@@ -70,8 +70,8 @@ export default function TeamSettingsPage() {
     setSaving(true)
 
     const supabase = createClient()
-    const { error } = await supabase
-      .from('teams')
+    const { error } = await (supabase
+      .from('teams') as any)
       .update({
         name,
         league_format: leagueFormat,

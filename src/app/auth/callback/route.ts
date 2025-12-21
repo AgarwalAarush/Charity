@@ -31,8 +31,8 @@ export async function GET(request: Request) {
           fullName: data.user.user_metadata?.full_name,
         })
 
-        const { data: newProfile, error: profileError } = await supabase
-          .from('profiles')
+        const { data: newProfile, error: profileError } = await (supabase
+          .from('profiles') as any)
           .insert({
             id: data.user.id,
             email: data.user.email!,

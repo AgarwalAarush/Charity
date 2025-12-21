@@ -102,7 +102,7 @@ export function AddMatchDialog({
         warm_up_court: warmupCourt || null,
       }
 
-      const { error } = await supabase.from('matches').insert(matchData)
+      const { error } = await (supabase.from('matches') as any).insert(matchData)
 
       if (error) {
         toast({
@@ -174,7 +174,7 @@ export function AddMatchDialog({
         .eq('id', teamId)
         .single()
 
-      if (!teamData || (teamData.captain_id !== user.id && teamData.co_captain_id !== user.id)) {
+      if (!teamData || ((teamData as any).captain_id !== user.id && (teamData as any).co_captain_id !== user.id)) {
         toast({
           title: 'Permission denied',
           description: 'Only team captains can import schedules',
@@ -198,8 +198,8 @@ export function AddMatchDialog({
         warm_up_court: match.warmupCourt || null,
       }))
 
-      const { data, error } = await supabase
-        .from('matches')
+      const { data, error } = await (supabase
+        .from('matches') as any)
         .insert(matchesToInsert)
         .select()
 

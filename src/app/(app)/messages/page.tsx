@@ -79,7 +79,7 @@ export default function MessagesPage() {
       .order('created_at', { ascending: false })
 
     if (invites) {
-      const invitationsWithData = invites.map(invite => ({
+      const invitationsWithData = (invites as any[]).map((invite: any) => ({
         ...invite,
         team: invite.teams,
         inviter: invite.inviter,
@@ -99,8 +99,8 @@ export default function MessagesPage() {
       .eq('user_id', user.id)
 
     const allTeams = [
-      ...(captainTeams || []),
-      ...(memberTeams?.map(m => m.teams).filter(Boolean) as Team[] || [])
+      ...((captainTeams as Team[]) || []),
+      ...((memberTeams as any[])?.map((m: any) => m.teams).filter(Boolean) as Team[] || [])
     ]
 
     // Remove duplicates
@@ -123,8 +123,8 @@ export default function MessagesPage() {
 
       // Create if doesn't exist
       if (!conversation) {
-        const { data: newConv } = await supabase
-          .from('conversations')
+        const { data: newConv } = await (supabase
+          .from('conversations') as any)
           .insert({
             kind: 'team',
             team_id: team.id,
@@ -140,17 +140,17 @@ export default function MessagesPage() {
         const { data: readStatus } = await supabase
           .from('conversation_reads')
           .select('last_read_at')
-          .eq('conversation_id', conversation.id)
+          .eq('conversation_id', (conversation as any).id)
           .eq('user_id', user.id)
           .maybeSingle()
 
-        const hasUnread = conversation.last_message_at && (
-          !readStatus || 
-          new Date(conversation.last_message_at) > new Date(readStatus.last_read_at)
+        const hasUnread = (conversation as any).last_message_at && (
+          !readStatus ||
+          new Date((conversation as any).last_message_at) > new Date((readStatus as any).last_read_at)
         )
 
         teamConvs.push({
-          ...conversation,
+          ...(conversation as any),
           team,
           has_unread: hasUnread,
         })
@@ -173,7 +173,7 @@ export default function MessagesPage() {
 
     // Resolve other user profiles
     const dmConvsWithProfiles: DMConversation[] = []
-    for (const conv of dmConvs || []) {
+    for (const conv of (dmConvs as any[]) || []) {
       const otherUserId = conv.dm_user1 === user.id ? conv.dm_user2 : conv.dm_user1
 
       const { data: otherUser } = await supabase
@@ -191,14 +191,14 @@ export default function MessagesPage() {
         .maybeSingle()
 
       const hasUnread = conv.last_message_at && (
-        !readStatus || 
-        new Date(conv.last_message_at) > new Date(readStatus.last_read_at)
+        !readStatus ||
+        new Date(conv.last_message_at) > new Date((readStatus as any).last_read_at)
       )
 
       if (otherUser) {
         dmConvsWithProfiles.push({
           ...conv,
-          other_user: otherUser,
+          other_user: otherUser as any,
           has_unread: hasUnread,
         })
       }
@@ -229,8 +229,8 @@ export default function MessagesPage() {
     setRespondingToInvite(invitationId)
     const supabase = createClient()
 
-    const { error } = await supabase
-      .from('team_invitations')
+    const { error } = await (supabase
+      .from('team_invitations') as any)
       .update({
         status: accept ? 'accepted' : 'declined',
         responded_at: new Date().toISOString(),

@@ -88,7 +88,7 @@ export function AddEventDialog({
         .eq('id', teamId)
         .single()
 
-      if (!teamData || (teamData.captain_id !== user.id && teamData.co_captain_id !== user.id)) {
+      if (!teamData || ((teamData as any).captain_id !== user.id && (teamData as any).co_captain_id !== user.id)) {
         toast({
           title: 'Permission denied',
           description: 'Only team captains can create events',
@@ -107,7 +107,7 @@ export function AddEventDialog({
         description: description || null,
       }
 
-      const { error } = await supabase.from('events').insert(eventData)
+      const { error } = await (supabase.from('events') as any).insert(eventData)
 
       if (error) {
         toast({

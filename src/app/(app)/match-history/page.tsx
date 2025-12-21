@@ -108,8 +108,8 @@ export default function MatchHistoryPage() {
         return
       }
 
-      const rosterIds = rosters?.map(r => r.id) || []
-      const uniqueTeams = rosters?.map(r => ({
+      const rosterIds = rosters?.map((r: any) => r.id) || []
+      const uniqueTeams = rosters?.map((r: any) => ({
         id: r.teams.id,
         name: r.teams.name,
       })) || []
@@ -179,15 +179,15 @@ export default function MatchHistoryPage() {
       }
 
       // Combine and deduplicate lineups
-      const allLineups = [...(lineupsData || []), ...(lineupsData2 || [])]
+      const allLineups = [...(lineupsData || []), ...(lineupsData2 || [])] as any[]
       const uniqueLineups = Array.from(
-        new Map(allLineups.map(lineup => [lineup.id, lineup])).values()
-      )
+        new Map(allLineups.map((lineup: any) => [lineup.id, lineup])).values()
+      ) as any[]
 
       // Filter to only past matches and sort by date (newest first)
       const pastLineups = uniqueLineups
-        .filter(lineup => lineup.matches.date < today)
-        .sort((a, b) => b.matches.date.localeCompare(a.matches.date))
+        .filter((lineup: any) => lineup.matches.date < today)
+        .sort((a: any, b: any) => b.matches.date.localeCompare(a.matches.date))
 
       setLineups(pastLineups)
 
@@ -219,8 +219,8 @@ export default function MatchHistoryPage() {
         console.error('Error fetching statistics:', statsError)
       } else if (statsData) {
         // Calculate overall stats
-        const overall = statsData.reduce(
-          (acc, stat) => ({
+        const overall = (statsData as any[]).reduce(
+          (acc, stat: any) => ({
             matchesPlayed: acc.matchesPlayed + (stat.matches_played || 0),
             matchesWon: acc.matchesWon + (stat.matches_won || 0),
             matchesLost: acc.matchesLost + (stat.matches_lost || 0),
@@ -248,7 +248,7 @@ export default function MatchHistoryPage() {
 
         // Calculate per-team stats
         const teamStatsMap = new Map<string, TeamStatistics>()
-        statsData.forEach((stat) => {
+        ;(statsData as any[]).forEach((stat: any) => {
           const teamId = stat.team_id
           const teamName = stat.teams?.name || 'Unknown Team'
           const existing = teamStatsMap.get(teamId)

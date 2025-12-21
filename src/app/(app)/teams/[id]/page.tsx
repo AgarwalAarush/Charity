@@ -61,19 +61,19 @@ export default function TeamDetailPage() {
       .single()
 
     if (teamData) {
-      setTeam(teamData)
-      
+      setTeam(teamData as any)
+
       // Check if current user is captain
-      if (user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      if (user && ((teamData as any).captain_id === user.id || (teamData as any).co_captain_id === user.id)) {
         setIsCaptain(true)
-        
+
         // Load pending invitations count for captains
         const { count } = await supabase
           .from('team_invitations')
           .select('*', { count: 'exact', head: true })
           .eq('team_id', teamId)
           .eq('status', 'pending')
-        
+
         setPendingInvitesCount(count || 0)
       }
     }
@@ -150,11 +150,11 @@ export default function TeamDetailPage() {
       .maybeSingle()
 
     if (existingConv) {
-      setTeamConversationId(existingConv.id)
+      setTeamConversationId((existingConv as any).id)
     } else {
       // Create conversation if it doesn't exist
-      const { data: newConv } = await supabase
-        .from('conversations')
+      const { data: newConv } = await (supabase
+        .from('conversations') as any)
         .insert({
           kind: 'team',
           team_id: teamId,
@@ -176,11 +176,11 @@ export default function TeamDetailPage() {
 
     if (statsData) {
       setTeamStats({
-        totalMatches: statsData.total_matches,
-        wins: statsData.wins,
-        losses: statsData.losses,
-        ties: statsData.ties,
-        winPercentage: statsData.win_percentage || 0,
+        totalMatches: (statsData as any).total_matches,
+        wins: (statsData as any).wins,
+        losses: (statsData as any).losses,
+        ties: (statsData as any).ties,
+        winPercentage: (statsData as any).win_percentage || 0,
       })
     }
 

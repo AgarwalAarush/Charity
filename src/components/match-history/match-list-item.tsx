@@ -39,7 +39,7 @@ export function MatchListItem({
   scores,
 }: MatchListItemProps) {
   const hasScores = scores && scores.length > 0
-  const scoreDisplay = hasScores ? formatScoreDisplay(scores) : null
+  const scoreDisplay = hasScores ? formatScoreDisplay(scores as any) : null
 
   return (
     <Link href={`/teams/${teamId}/matches/${matchId}`}>

@@ -61,7 +61,7 @@ export default function AvailabilityPage() {
         .maybeSingle()
       
       if (userRoster) {
-        setCurrentUserRosterIds({ [teamId]: userRoster.id })
+        setCurrentUserRosterIds({ [teamId]: (userRoster as any).id })
       }
     }
 
@@ -99,8 +99,8 @@ export default function AvailabilityPage() {
 
     // Combine matches and events into a single sorted list
     const items: Array<{ type: 'match' | 'event'; data: Match | Event; id: string; date: string }> = []
-    
-    matches?.forEach(match => {
+
+    ;(matches as any[])?.forEach((match: any) => {
       items.push({
         type: 'match',
         data: match,
@@ -109,7 +109,7 @@ export default function AvailabilityPage() {
       })
     })
 
-    events?.forEach(event => {
+    ;(events as any[])?.forEach((event: any) => {
       items.push({
         type: 'event',
         data: event,
@@ -123,7 +123,7 @@ export default function AvailabilityPage() {
 
     // Load availability for all combinations
     const itemIds = items.map(item => item.id)
-    const playerIds = players.map(p => p.id)
+    const playerIds = (players as any[]).map((p: any) => p.id)
 
     const { data: availabilityData } = await supabase
       .from('availability')
@@ -132,17 +132,17 @@ export default function AvailabilityPage() {
 
     // Build availability lookup
     const availability: Record<string, Record<string, Availability>> = {}
-    availabilityData?.forEach(a => {
+    ;(availabilityData as any[])?.forEach((a: any) => {
       const itemId = a.match_id || a.event_id
       if (!itemId) return
-      
+
       if (!availability[a.roster_member_id]) {
         availability[a.roster_member_id] = {}
       }
       availability[a.roster_member_id][itemId] = a
     })
 
-    setData({ players, items, availability })
+    setData({ players: players as RosterMember[], items, availability })
     setLoading(false)
   }
 
@@ -158,8 +158,8 @@ export default function AvailabilityPage() {
 
     let error = null
     if (existing) {
-      const result = await supabase
-        .from('availability')
+      const result = await (supabase
+        .from('availability') as any)
         .update({ status })
         .eq('id', existing.id)
       error = result.error
@@ -168,14 +168,14 @@ export default function AvailabilityPage() {
         roster_member_id: playerId,
         status,
       }
-      
+
       if (itemType === 'match') {
         insertData.match_id = itemId
       } else {
         insertData.event_id = itemId
       }
-      
-      const result = await supabase.from('availability').insert(insertData)
+
+      const result = await (supabase.from('availability') as any).insert(insertData)
       error = result.error
     }
 

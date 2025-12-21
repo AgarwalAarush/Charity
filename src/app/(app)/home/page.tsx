@@ -104,8 +104,8 @@ export default function HomePage() {
 
     // Combine and deduplicate teams
     const allTeams = [
-      ...(memberships?.map(m => m.teams as Team).filter(Boolean) || []),
-      ...(captainTeams || [])
+      ...(memberships?.map((m: any) => m.teams as Team).filter(Boolean) || []),
+      ...((captainTeams as Team[]) || [])
     ]
     const uniqueTeams = allTeams.filter((team, index, self) =>
       index === self.findIndex(t => t.id === team.id)
@@ -117,12 +117,12 @@ export default function HomePage() {
       return
     }
 
-    const teamIds = memberships.map(m => m.team_id)
-    const rosterMemberIds = memberships.map(m => m.id)
+    const teamIds = memberships.map((m: any) => m.team_id)
+    const rosterMemberIds = memberships.map((m: any) => m.id)
     
     // Build roster member map by team
     const rosterMap: Record<string, string> = {}
-    memberships.forEach(m => {
+    memberships.forEach((m: any) => {
       rosterMap[m.team_id] = m.id
     })
 
@@ -154,7 +154,7 @@ export default function HomePage() {
     }
 
     // Get lineups and availability for these matches
-    const matchIds = matches.map(m => m.id)
+    const matchIds = matches.map((m: any) => m.id)
 
     const { data: lineups } = await supabase
       .from('lineups')
@@ -191,7 +191,7 @@ export default function HomePage() {
 
     // Build match to roster member mapping
     const matchRosterMap: Record<string, string> = {}
-    matches.forEach(match => {
+    matches.forEach((match: any) => {
       const rosterId = rosterMap[match.team_id]
       if (rosterId) {
         matchRosterMap[match.id] = rosterId
@@ -200,27 +200,27 @@ export default function HomePage() {
     setRosterMemberMap(matchRosterMap)
     
     // Process matches with status
-    const processedMatches: UpcomingMatch[] = matches.map(match => {
-      const membership = memberships.find(m => m.team_id === match.team_id)
+    const processedMatches: UpcomingMatch[] = matches.map((match: any) => {
+      const membership = memberships.find((m: any) => m.team_id === match.team_id) as any
       const memberRosterId = membership?.id
 
       // Check if user is in lineup
-      const userLineup = lineups?.find(l =>
+      const userLineup = lineups?.find((l: any) =>
         l.match_id === match.id &&
         (l.player1_id === memberRosterId || l.player2_id === memberRosterId)
-      )
+      ) as any
 
       // Check availability response
-      let availability = availabilities?.find(a =>
+      let availability = availabilities?.find((a: any) =>
         a.match_id === match.id && a.roster_member_id === memberRosterId
-      )
+      ) as any
       
       // If no availability set, auto-calculate from defaults
       if (!availability) {
         const autoStatus = calculateMatchAvailability(
           match.date,
           match.time,
-          profile?.availability_defaults as Record<string, string[]> | null | undefined
+          (profile as any)?.availability_defaults as Record<string, string[]> | null | undefined
         )
         availability = { status: autoStatus } as any
       }
@@ -237,7 +237,7 @@ export default function HomePage() {
         } else if (userLineup.player1) {
           partnerName = (userLineup.player1 as { full_name: string }).full_name
         }
-      } else if (lineups?.some(l => l.match_id === match.id)) {
+      } else if (lineups?.some((l: any) => l.match_id === match.id)) {
         // Lineup posted but user not in it
         status = 'off'
       } else if (!availability) {
@@ -285,7 +285,7 @@ export default function HomePage() {
 
     if (!rosters || rosters.length === 0) return
 
-    const rosterIds = rosters.map(r => r.id)
+    const rosterIds = rosters.map((r: any) => r.id)
 
     // Get all individual statistics for this user's roster memberships
     const { data: stats } = await supabase
@@ -295,9 +295,9 @@ export default function HomePage() {
 
     if (stats && stats.length > 0) {
       // Aggregate stats across all teams
-      const totalMatches = stats.reduce((sum, s) => sum + s.matches_played, 0)
-      const totalWins = stats.reduce((sum, s) => sum + s.matches_won, 0)
-      const totalLosses = stats.reduce((sum, s) => sum + s.matches_lost, 0)
+      const totalMatches = stats.reduce((sum, s: any) => sum + s.matches_played, 0)
+      const totalWins = stats.reduce((sum, s: any) => sum + s.matches_won, 0)
+      const totalLosses = stats.reduce((sum, s: any) => sum + s.matches_lost, 0)
       const winPercentage = totalMatches > 0 ? (totalWins / totalMatches * 100) : 0
 
       setLifetimeStats({
@@ -367,14 +367,14 @@ export default function HomePage() {
 
     let error = null
     if (existing) {
-      const result = await supabase
-        .from('availability')
+      const result = await (supabase
+        .from('availability') as any)
         .update({ status: newStatus })
-        .eq('id', existing.id)
+        .eq('id', (existing as any).id)
       error = result.error
     } else {
-      const result = await supabase
-        .from('availability')
+      const result = await (supabase
+        .from('availability') as any)
         .insert({
           roster_member_id: rosterMemberId,
           match_id: matchId,

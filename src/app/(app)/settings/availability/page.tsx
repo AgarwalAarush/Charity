@@ -35,8 +35,8 @@ export default function DefaultAvailabilityPage() {
       .eq('id', user.id)
       .single()
 
-    if (profile?.availability_defaults && Object.keys(profile.availability_defaults).length > 0) {
-      setAvailability(profile.availability_defaults as Record<string, string[]>)
+    if ((profile as any)?.availability_defaults && Object.keys((profile as any).availability_defaults).length > 0) {
+      setAvailability((profile as any).availability_defaults as Record<string, string[]>)
     } else {
       // Initialize with all time slots selected (available anytime by default)
       setAvailability(getAllTimeSlots())
@@ -60,8 +60,8 @@ export default function DefaultAvailabilityPage() {
       return
     }
 
-    const { error } = await supabase
-      .from('profiles')
+    const { error } = await (supabase
+      .from('profiles') as any)
       .update({ availability_defaults: availability })
       .eq('id', user.id)
 
