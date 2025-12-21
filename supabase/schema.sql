@@ -245,7 +245,7 @@ BEGIN
     AND user_id = auth.uid()
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Helper function to check if user is a team captain
 CREATE OR REPLACE FUNCTION is_team_captain(_team_id UUID)
@@ -258,7 +258,7 @@ BEGIN
     AND (captain_id = auth.uid() OR co_captain_id = auth.uid())
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Helper function to check if two users share at least one team
 CREATE OR REPLACE FUNCTION shares_team_with(_other_user_id UUID)
@@ -274,7 +274,7 @@ BEGIN
     AND rm2.is_active = true
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- ============================================================================
 -- RLS POLICIES (FIXED: Using helper functions to avoid recursion)
@@ -486,7 +486,7 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 -- Apply updated_at triggers
 CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
@@ -543,7 +543,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE TRIGGER calculate_lineup_rating_trigger
   BEFORE INSERT OR UPDATE ON lineups
@@ -570,7 +570,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE TRIGGER validate_roster_email_trigger
   BEFORE UPDATE ON roster_members
@@ -601,7 +601,7 @@ EXCEPTION
     RAISE WARNING 'Failed to create profile for user %: %', NEW.id, SQLERRM;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Drop trigger if it exists, then recreate
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
@@ -707,7 +707,7 @@ BEGIN
   WHERE id = NEW.conversation_id;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE TRIGGER update_conversation_trigger
   AFTER INSERT ON messages
@@ -763,7 +763,7 @@ BEGIN
   
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER handle_invitation_acceptance_trigger
   BEFORE UPDATE ON team_invitations
@@ -810,7 +810,7 @@ BEGIN
   
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER add_captain_to_roster_trigger
   AFTER INSERT ON teams

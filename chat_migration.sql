@@ -85,7 +85,7 @@ BEGIN
     AND rm2.is_active = true
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- ============================================================================
 -- 4. RLS Policies for Conversations
@@ -197,7 +197,7 @@ BEGIN
   WHERE id = NEW.conversation_id;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 DROP TRIGGER IF EXISTS update_conversation_trigger ON messages;
 CREATE TRIGGER update_conversation_trigger
