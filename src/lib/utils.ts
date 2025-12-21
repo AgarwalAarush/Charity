@@ -164,6 +164,97 @@ export function parseCSVSchedule(csvText: string): Array<{
   return results
 }
 
+export function parseCSVPlayers(csvText: string): Array<{
+  fullName: string
+  email?: string
+  phone?: string
+  ntrpRating?: number
+  role?: 'captain' | 'co-captain' | 'player'
+}> {
+  const lines = csvText.trim().split('\n')
+  const results: Array<{
+    fullName: string
+    email?: string
+    phone?: string
+    ntrpRating?: number
+    role?: 'captain' | 'co-captain' | 'player'
+  }> = []
+
+  // Skip header if present
+  const firstLine = lines[0].toLowerCase()
+  const hasHeader = firstLine.includes('name') || firstLine.includes('email') || firstLine.includes('full')
+  const startIndex = hasHeader ? 1 : 0
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    // Handle CSV with quoted fields that may contain commas
+    const parts: string[] = []
+    let current = ''
+    let inQuotes = false
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j]
+      if (char === '"') {
+        inQuotes = !inQuotes
+      } else if (char === ',' && !inQuotes) {
+        parts.push(current.trim())
+        current = ''
+      } else {
+        current += char
+      }
+    }
+    parts.push(current.trim()) // Add the last part
+
+    // Remove quotes from parts
+    const cleanedParts = parts.map(p => p.replace(/^"|"$/g, ''))
+
+    if (cleanedParts.length >= 1 && cleanedParts[0]) {
+      // CSV format: Full Name, Email, Phone, NTRP Rating, Role
+      const player: any = {
+        fullName: cleanedParts[0],
+      }
+
+      // Email (index 1)
+      if (cleanedParts[1] && cleanedParts[1].includes('@')) {
+        player.email = cleanedParts[1].trim()
+      }
+
+      // Phone (index 2)
+      if (cleanedParts[2]) {
+        player.phone = cleanedParts[2].trim()
+      }
+
+      // NTRP Rating (index 3)
+      if (cleanedParts[3] && !isNaN(parseFloat(cleanedParts[3]))) {
+        const rating = parseFloat(cleanedParts[3])
+        if (rating >= 1.0 && rating <= 7.0) {
+          player.ntrpRating = rating
+        }
+      }
+
+      // Role (index 4)
+      if (cleanedParts[4]) {
+        const role = cleanedParts[4].toLowerCase().trim()
+        if (role === 'captain' || role === 'co-captain' || role === 'player') {
+          player.role = role
+        } else if (role === 'cocaptain' || role === 'co_captain') {
+          player.role = 'co-captain'
+        } else {
+          player.role = 'player' // Default
+        }
+      } else {
+        player.role = 'player' // Default
+      }
+
+      results.push(player)
+    }
+  }
+
+  return results
+}
+
 export function generateLineupSummary(
   lineups: Array<{
     court_slot: number

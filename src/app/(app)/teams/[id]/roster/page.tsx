@@ -10,18 +10,39 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { createClient } from '@/lib/supabase/client'
 import { RosterMember } from '@/types/database.types'
-import { Plus, Upload, MoreVertical, Crown, MessageCircle, User } from 'lucide-react'
+import { Plus, Upload, MoreVertical, Crown, MessageCircle, User, Edit, Trash2 } from 'lucide-react'
 import { AddPlayerDialog } from '@/components/teams/add-player-dialog'
+import { ImportPlayersDialog } from '@/components/teams/import-players-dialog'
+import { EditPlayerDialog } from '@/components/teams/edit-player-dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { useToast } from '@/hooks/use-toast'
 
 export default function RosterPage() {
   const params = useParams()
   const teamId = params.id as string
   const [roster, setRoster] = useState<RosterMember[]>([])
   const [loading, setLoading] = useState(true)
+  const [isCaptain, setIsCaptain] = useState(false)
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [editingPlayer, setEditingPlayer] = useState<RosterMember | null>(null)
+  const [showDeleteAlert, setShowDeleteAlert] = useState(false)
+  const [playerToDelete, setPlayerToDelete] = useState<RosterMember | null>(null)
+  const { toast } = useToast()
 
   useEffect(() => {
     loadRoster()
+    checkCaptainStatus()
   }, [teamId])
 
   async function loadRoster() {
@@ -39,6 +60,85 @@ export default function RosterPage() {
       setRoster(data)
     }
     setLoading(false)
+  }
+
+  async function checkCaptainStatus() {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      setIsCaptain(false)
+      return
+    }
+
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('captain_id, co_captain_id')
+      .eq('id', teamId)
+      .single()
+
+    if (teamData && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      setIsCaptain(true)
+    } else {
+      setIsCaptain(false)
+    }
+  }
+
+  async function handleDeletePlayer() {
+    if (!playerToDelete) return
+
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      toast({
+        title: 'Error',
+        description: 'You must be logged in',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Verify user is captain
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('captain_id, co_captain_id')
+      .eq('id', teamId)
+      .single()
+
+    if (!teamData || (teamData.captain_id !== user.id && teamData.co_captain_id !== user.id)) {
+      toast({
+        title: 'Permission denied',
+        description: 'Only team captains can remove players',
+        variant: 'destructive',
+      })
+      setShowDeleteAlert(false)
+      setPlayerToDelete(null)
+      return
+    }
+
+    // Soft delete by setting is_active to false
+    const { error } = await supabase
+      .from('roster_members')
+      .update({ is_active: false })
+      .eq('id', playerToDelete.id)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Player removed',
+        description: `${playerToDelete.full_name} has been removed from the roster`,
+      })
+      loadRoster()
+    }
+
+    setShowDeleteAlert(false)
+    setPlayerToDelete(null)
   }
 
   const getInitials = (name: string) => {
@@ -76,26 +176,30 @@ export default function RosterPage() {
       <main className="flex-1 p-4 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">{roster.length} Players</h2>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm">
-              <Upload className="h-4 w-4 mr-1" />
-              CSV
-            </Button>
-            <Button size="sm" onClick={() => setShowAddDialog(true)}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add
-            </Button>
-          </div>
+          {isCaptain && (
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowImportDialog(true)}>
+                <Upload className="h-4 w-4 mr-1" />
+                Import CSV
+              </Button>
+              <Button size="sm" onClick={() => setShowAddDialog(true)}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add
+              </Button>
+            </div>
+          )}
         </div>
 
         {roster.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center">
               <p className="text-muted-foreground mb-4">No players on roster</p>
-              <Button onClick={() => setShowAddDialog(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Player
-              </Button>
+              {isCaptain && (
+                <Button onClick={() => setShowAddDialog(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Player
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -150,6 +254,34 @@ export default function RosterPage() {
                           </Button>
                         </Link>
                       )}
+                      {isCaptain && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => {
+                              setEditingPlayer(player)
+                              setShowEditDialog(true)
+                            }}
+                            title="Edit player"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => {
+                              setPlayerToDelete(player)
+                              setShowDeleteAlert(true)
+                            }}
+                            title="Remove player"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
                       <div className="text-right px-2">
                         <p className="text-xs text-muted-foreground">Fair Play</p>
                         <p className="text-sm font-medium">{player.fair_play_score}</p>
@@ -172,6 +304,49 @@ export default function RosterPage() {
           loadRoster()
         }}
       />
+
+      <ImportPlayersDialog
+        open={showImportDialog}
+        onOpenChange={setShowImportDialog}
+        teamId={teamId}
+        onImported={() => {
+          setShowImportDialog(false)
+          loadRoster()
+        }}
+      />
+
+      <EditPlayerDialog
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        teamId={teamId}
+        player={editingPlayer}
+        onUpdated={() => {
+          setShowEditDialog(false)
+          setEditingPlayer(null)
+          loadRoster()
+        }}
+      />
+
+      <AlertDialog open={showDeleteAlert} onOpenChange={setShowDeleteAlert}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Player from Roster?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove <strong>{playerToDelete?.full_name}</strong> from the roster?
+              This action cannot be undone, but you can add them back later if needed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPlayerToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeletePlayer}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              Remove Player
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
