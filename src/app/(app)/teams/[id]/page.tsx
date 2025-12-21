@@ -429,6 +429,21 @@ export default function TeamDetailPage() {
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {formatDate(event.date, 'EEE, MMM d')} {formatTime(event.time).toLowerCase()}
+                          {(event as any).duration && (
+                            <span className="ml-1">
+                              {(() => {
+                                const hours = Math.floor((event as any).duration / 60)
+                                const minutes = (event as any).duration % 60
+                                if (hours > 0 && minutes > 0) {
+                                  return `(${hours}h ${minutes}m)`
+                                } else if (hours > 0) {
+                                  return `(${hours}h)`
+                                } else {
+                                  return `(${minutes}m)`
+                                }
+                              })()}
+                            </span>
+                          )}
                         </p>
                         {event.location && (
                           <p className="text-xs text-muted-foreground mt-1">

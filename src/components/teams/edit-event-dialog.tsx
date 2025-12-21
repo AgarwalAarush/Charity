@@ -47,6 +47,7 @@ export function EditEventDialog({
   const [eventName, setEventName] = useState('')
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
+  const [duration, setDuration] = useState('')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
   const [eventType, setEventType] = useState<EventType | ''>('')
@@ -65,6 +66,7 @@ export function EditEventDialog({
       setEventName(event.event_name || '')
       setDate(event.date || '')
       setTime(event.time || '')
+      setDuration((event as any).duration?.toString() || '')
       setLocation(event.location || '')
       setDescription(event.description || '')
       setEventType((event as any).event_type || '')
@@ -242,6 +244,7 @@ export function EditEventDialog({
             event_name: eventName,
             date,
             time,
+            duration: duration ? parseInt(duration) : null,
             location: location || null,
             description: description || null,
             event_type: eventType || null,
@@ -295,6 +298,7 @@ export function EditEventDialog({
           event_name: eventName,
           date: eventDate,
           time,
+          duration: duration ? parseInt(duration) : null,
           location: location || null,
           description: description || null,
           event_type: eventType || null,
@@ -472,6 +476,19 @@ export function EditEventDialog({
                 </Select>
               </div>
             </div>
+          </div>
+
+          {/* Duration */}
+          <div className="space-y-2">
+            <Label htmlFor="duration">Duration (minutes)</Label>
+            <Input
+              id="duration"
+              type="number"
+              min="1"
+              placeholder="e.g., 60, 90, 120"
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+            />
           </div>
 
           {/* Location */}

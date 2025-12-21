@@ -44,6 +44,7 @@ export function AddEventDialog({
   const [eventName, setEventName] = useState('')
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
+  const [duration, setDuration] = useState('')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
   const [eventType, setEventType] = useState<EventType | ''>('')
@@ -59,6 +60,7 @@ export function AddEventDialog({
     setEventName('')
     setDate('')
     setTime('')
+    setDuration('')
     setLocation('')
     setDescription('')
     setEventType('')
@@ -206,6 +208,7 @@ export function AddEventDialog({
           event_name: eventName,
           date: eventDate,
           time,
+          duration: duration ? parseInt(duration) : null,
           location: location || null,
           description: description || null,
           event_type: eventType || null,
@@ -374,6 +377,19 @@ export function AddEventDialog({
                 </Select>
               </div>
             </div>
+          </div>
+
+          {/* Duration */}
+          <div className="space-y-2">
+            <Label htmlFor="duration">Duration (minutes)</Label>
+            <Input
+              id="duration"
+              type="number"
+              min="1"
+              placeholder="e.g., 60, 90, 120"
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+            />
           </div>
 
           {/* Location */}

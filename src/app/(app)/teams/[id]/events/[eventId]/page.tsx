@@ -317,6 +317,21 @@ export default function EventDetailPage() {
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
                 {formatTime(event.time)}
+                {(event as any).duration && (
+                  <span className="text-muted-foreground">
+                    {(() => {
+                      const hours = Math.floor((event as any).duration / 60)
+                      const minutes = (event as any).duration % 60
+                      if (hours > 0 && minutes > 0) {
+                        return `(${hours}h ${minutes}m)`
+                      } else if (hours > 0) {
+                        return `(${hours}h)`
+                      } else {
+                        return `(${minutes}m)`
+                      }
+                    })()}
+                  </span>
+                )}
               </div>
               {event.location && (
                 <div className="flex items-center gap-2">
