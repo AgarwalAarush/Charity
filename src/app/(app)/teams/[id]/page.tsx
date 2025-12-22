@@ -19,6 +19,7 @@ type Match = {
   opponent_name: string
   venue?: string | null
   is_home: boolean
+  duration?: number | null
   [key: string]: any
 }
 
@@ -33,7 +34,7 @@ type Event = {
   duration?: number | null
   [key: string]: any
 }
-import { formatDate, formatTime, cn } from '@/lib/utils'
+import { formatDate, formatTime, calculateEndTime, cn } from '@/lib/utils'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import {
   Users,
@@ -141,6 +142,33 @@ export default function TeamDetailPage() {
 
     if (matchData) {
       setMatches(matchData)
+      // Load lineups for all matches
+      const matchIds = matchData.map(m => m.id)
+      if (matchIds.length > 0) {
+        const { data: lineupsData } = await supabase
+          .from('lineups')
+          .select(`
+            id,
+            match_id,
+            court_slot,
+            player1:roster_members!lineups_player1_id_fkey(full_name),
+            player2:roster_members!lineups_player2_id_fkey(full_name)
+          `)
+          .in('match_id', matchIds)
+          .order('match_id')
+          .order('court_slot', { ascending: true })
+
+        if (lineupsData) {
+          const lineupsByMatch: Record<string, any[]> = {}
+          lineupsData.forEach(lineup => {
+            if (!lineupsByMatch[lineup.match_id]) {
+              lineupsByMatch[lineup.match_id] = []
+            }
+            lineupsByMatch[lineup.match_id].push(lineup)
+          })
+          setMatchLineups(lineupsByMatch)
+        }
+      }
     }
 
     // Load upcoming events (gracefully handle if table doesn't exist yet)
@@ -416,35 +444,53 @@ export default function TeamDetailPage() {
                         onClick={() => router.push(`/teams/${teamId}/matches/${match.id}`)}
                       >
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-medium text-sm">
-                              vs {match.opponent_name}
-                            </span>
-                            <Badge variant={match.is_home ? 'default' : 'outline'} className="text-xs">
-                              {match.is_home ? 'Home' : 'Away'}
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="default" className="text-xs bg-green-500 text-white">
+                            Match
+                          </Badge>
+                          <span className="font-medium text-sm">
+                            vs {match.opponent_name}
+                          </span>
+                          {match.is_home ? (
+                            <Badge variant="default" className="text-xs bg-teal-500 text-white">
+                              Home
                             </Badge>
-                          </div>
+                          ) : (
+                            <Badge variant="default" className="text-xs bg-orange-500 text-white">
+                              Away
+                            </Badge>
+                          )}
+                        </div>
                           <p className="text-xs text-muted-foreground">
                             {formatDate(match.date, 'EEE, MMM d')} {formatTime(match.time).toLowerCase()}
+                            {match.duration && (
+                              <span className="ml-1">
+                                - {formatTime(calculateEndTime(match.time, match.duration)).toLowerCase()}
+                              </span>
+                            )}
                           </p>
+                          {match.venue && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              📍 {match.venue}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
-                          {lineups.length > 0 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setExpandedLineups(prev => ({
-                                  ...prev,
-                                  [match.id]: !prev[match.id]
-                                }))
-                              }}
-                            >
-                              <ChevronDown className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-180")} />
-                            </Button>
-                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setExpandedLineups(prev => ({
+                                ...prev,
+                                [match.id]: !prev[match.id]
+                              }))
+                            }}
+                            title={lineups.length > 0 ? "Show/hide lineup" : "No lineup posted yet"}
+                          >
+                            <ChevronDown className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-180")} />
+                          </Button>
                           <Link href={`/teams/${teamId}/matches/${match.id}/lineup`}>
                             <Button 
                               variant="ghost" 
@@ -459,18 +505,24 @@ export default function TeamDetailPage() {
                           <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         </div>
                       </div>
-                      {isExpanded && lineups.length > 0 && (
+                      {isExpanded && (
                         <div className="mt-3 pt-3 border-t space-y-2">
-                          {lineups.map((lineup) => (
-                            <div key={lineup.id} className="text-xs">
-                              <span className="font-medium">Court {lineup.court_slot}:</span>
-                              <span className="text-muted-foreground ml-1">
-                                {lineup.player1?.full_name || 'TBD'}
-                                {lineup.player2 && ` & ${lineup.player2.full_name}`}
-                                {!lineup.player1 && !lineup.player2 && ' No players assigned'}
-                              </span>
+                          {lineups.length > 0 ? (
+                            lineups.map((lineup) => (
+                              <div key={lineup.id} className="text-xs">
+                                <span className="font-medium">Court {lineup.court_slot}:</span>
+                                <span className="text-muted-foreground ml-1">
+                                  {lineup.player1?.full_name || 'TBD'}
+                                  {lineup.player2 && ` & ${lineup.player2.full_name}`}
+                                  {!lineup.player1 && !lineup.player2 && ' No players assigned'}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              No lineup posted yet. Click "Lineup" to create one.
                             </div>
-                          ))}
+                          )}
                         </div>
                       )}
                     </CardContent>
@@ -516,31 +568,26 @@ export default function TeamDetailPage() {
                           <span className="font-medium text-sm">
                             {event.event_name}
                           </span>
-                          <Badge 
-                            variant="secondary" 
-                            className={cn(
-                              "text-xs",
-                              (event as any).event_type && getEventTypeBadgeClass((event as any).event_type)
-                            )}
-                          >
-                            {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
-                          </Badge>
+                          {(() => {
+                            const eventType = (event as any).event_type
+                            if (eventType === 'practice') {
+                              return <Badge variant="default" className="text-xs bg-blue-500 text-white">Practice</Badge>
+                            } else if (eventType === 'warmup') {
+                              return <Badge variant="default" className="text-xs bg-orange-500 text-white">Warmup</Badge>
+                            } else if (eventType === 'social') {
+                              return <Badge variant="default" className="text-xs bg-pink-500 text-white">Social</Badge>
+                            } else if (eventType === 'other') {
+                              return <Badge variant="default" className="text-xs bg-purple-500 text-white">Other</Badge>
+                            } else {
+                              return <Badge variant="default" className="text-xs bg-green-500 text-white">Match</Badge>
+                            }
+                          })()}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {formatDate(event.date, 'EEE, MMM d')} {formatTime(event.time).toLowerCase()}
                           {(event as any).duration && (
                             <span className="ml-1">
-                              {(() => {
-                                const hours = Math.floor((event as any).duration / 60)
-                                const minutes = (event as any).duration % 60
-                                if (hours > 0 && minutes > 0) {
-                                  return `(${hours}h ${minutes}m)`
-                                } else if (hours > 0) {
-                                  return `(${hours}h)`
-                                } else {
-                                  return `(${minutes}m)`
-                                }
-                              })()}
+                              - {formatTime(calculateEndTime(event.time, (event as any).duration)).toLowerCase()}
                             </span>
                           )}
                         </p>

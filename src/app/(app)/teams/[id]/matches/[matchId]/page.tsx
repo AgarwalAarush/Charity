@@ -36,7 +36,7 @@ type Match = {
   duration?: number | null
   [key: string]: any
 }
-import { formatDate, formatTime, getWarmupMessage } from '@/lib/utils'
+import { formatDate, formatTime, getWarmupMessage, cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import {
   Select,
@@ -65,7 +65,8 @@ import {
   ChevronDown,
   ChevronUp,
   HelpCircle,
-  X
+  X,
+  ArrowLeft
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -81,6 +82,7 @@ import {
 import { ScoreEntryDialog } from '@/components/matches/score-entry-dialog'
 import { MatchResultBadge } from '@/components/matches/match-result-badge'
 import { formatScoreDisplay } from '@/lib/score-utils'
+import { VenueDialog } from '@/components/teams/venue-dialog'
 
 interface ChecklistItem {
   days: number
@@ -111,11 +113,25 @@ export default function MatchDetailPage() {
     unavailable: number
     total: number
   }>({ available: 0, maybe: 0, unavailable: 0, total: 0 })
+  const [availabilityDetails, setAvailabilityDetails] = useState<{
+    available: Array<{ id: string; name: string }>
+    maybe: Array<{ id: string; name: string }>
+    unavailable: Array<{ id: string; name: string }>
+  }>({ available: [], maybe: [], unavailable: [] })
+  const [expandedAvailability, setExpandedAvailability] = useState<{
+    available: boolean
+    maybe: boolean
+    unavailable: boolean
+  }>({ available: false, maybe: false, unavailable: false })
   const { toast } = useToast()
 
   const [warmupStatus, setWarmupStatus] = useState<'booked' | 'none_yet' | 'no_warmup'>('none_yet')
   const [warmupTime, setWarmupTime] = useState('')
   const [warmupCourt, setWarmupCourt] = useState('')
+  const [warmupLocationMode, setWarmupLocationMode] = useState<'venue' | 'custom'>('custom')
+  const [selectedWarmupVenueId, setSelectedWarmupVenueId] = useState<string | null>(null)
+  const [warmupVenues, setWarmupVenues] = useState<Array<{ id: string; name: string; address: string | null; team_id: string | null }>>([])
+  const [showWarmupVenueDialog, setShowWarmupVenueDialog] = useState(false)
   const [teamFacilityName, setTeamFacilityName] = useState<string | null>(null)
   const [teamFacilityAddress, setTeamFacilityAddress] = useState<string | null>(null)
   const [checklist, setChecklist] = useState<ChecklistItem[]>([
@@ -128,6 +144,51 @@ export default function MatchDetailPage() {
   useEffect(() => {
     loadMatchData()
   }, [matchId])
+
+  async function loadWarmupVenues(existingCourtValue?: string) {
+    const supabase = createClient()
+    
+    // Load system venues and team-specific venues
+    const { data: systemVenues } = await supabase
+      .from('venues')
+      .select('id, name, address, team_id')
+      .eq('is_active', true)
+      .is('team_id', null)
+      .order('name')
+
+    const { data: teamVenues } = await supabase
+      .from('venues')
+      .select('id, name, address, team_id')
+      .eq('team_id', teamId)
+      .eq('is_active', true)
+      .order('name')
+
+    const allVenues = [
+      ...(systemVenues || []),
+      ...(teamVenues || [])
+    ]
+
+    setWarmupVenues(allVenues)
+
+    // If existingCourtValue exists, try to match it to a venue
+    const courtValue = existingCourtValue || warmupCourt
+    if (courtValue) {
+      const matchedVenue = allVenues.find(v => {
+        const venueDisplay = v.address ? `${v.name} - ${v.address}` : v.name
+        return venueDisplay === courtValue || courtValue.includes(v.name)
+      })
+      if (matchedVenue) {
+        setWarmupLocationMode('venue')
+        setSelectedWarmupVenueId(matchedVenue.id)
+      } else {
+        setWarmupLocationMode('custom')
+        setSelectedWarmupVenueId(null)
+      }
+    } else {
+      setWarmupLocationMode('custom')
+      setSelectedWarmupVenueId(null)
+    }
+  }
 
   async function loadMatchData() {
     const supabase = createClient()
@@ -160,7 +221,11 @@ export default function MatchDetailPage() {
       } as any)
       setWarmupStatus(matchData.warm_up_status)
       setWarmupTime(matchData.warm_up_time || '')
-      setWarmupCourt(matchData.warm_up_court || '')
+      const courtValue = matchData.warm_up_court || ''
+      setWarmupCourt(courtValue)
+      
+      // Load venues and determine location mode
+      await loadWarmupVenues(courtValue)
 
       if (matchData.checklist_status) {
         const status = matchData.checklist_status as Record<string, boolean>
@@ -211,6 +276,7 @@ export default function MatchDetailPage() {
     await loadCourtScores()
     await loadLineups()
     await loadAvailabilitySummary()
+    // Warmup venues will be loaded after warmupCourt is set
 
     setLoading(false)
 
@@ -243,19 +309,22 @@ export default function MatchDetailPage() {
   async function loadAvailabilitySummary() {
     const supabase = createClient()
     
-    // Load all roster members for the team
+    // Load all roster members for the team with names
     const { data: rosterMembers } = await supabase
       .from('roster_members')
-      .select('id')
+      .select('id, full_name')
       .eq('team_id', teamId)
       .eq('is_active', true)
+      .order('full_name')
 
     if (!rosterMembers || rosterMembers.length === 0) {
       setAvailabilitySummary({ available: 0, maybe: 0, unavailable: 0, total: 0 })
+      setAvailabilityDetails({ available: [], maybe: [], unavailable: [] })
       return
     }
 
     const rosterMemberIds = rosterMembers.map(rm => rm.id)
+    const rosterMap = new Map(rosterMembers.map(rm => [rm.id, rm.full_name]))
 
     // Load availability for this match
     const { data: availability } = await supabase
@@ -264,31 +333,57 @@ export default function MatchDetailPage() {
       .eq('match_id', matchId)
       .in('roster_member_id', rosterMemberIds)
 
-    let available = 0
-    let maybe = 0
-    let unavailable = 0
+    const availablePlayers: Array<{ id: string; name: string }> = []
+    const maybePlayers: Array<{ id: string; name: string }> = []
+    const unavailablePlayers: Array<{ id: string; name: string }> = []
+    const respondedIds = new Set<string>()
+    const processedPlayerIds = new Set<string>() // Track players we've already added
 
     if (availability) {
       availability.forEach(avail => {
+        // Skip if we've already processed this player (handle duplicate records)
+        if (processedPlayerIds.has(avail.roster_member_id)) {
+          return
+        }
+        
+        // Only process if this player is in our roster
+        if (!rosterMap.has(avail.roster_member_id)) {
+          return
+        }
+        
+        const playerName = rosterMap.get(avail.roster_member_id) || 'Unknown'
+        const playerInfo = { id: avail.roster_member_id, name: playerName }
+        respondedIds.add(avail.roster_member_id)
+        processedPlayerIds.add(avail.roster_member_id)
+        
         if (avail.status === 'available') {
-          available++
+          availablePlayers.push(playerInfo)
         } else if (avail.status === 'maybe' || avail.status === 'late') {
-          maybe++
+          maybePlayers.push(playerInfo)
         } else {
-          unavailable++
+          unavailablePlayers.push(playerInfo)
         }
       })
     }
 
-    // Count players without availability as unavailable
-    const respondedIds = new Set(availability?.map(a => a.roster_member_id) || [])
-    unavailable += rosterMemberIds.length - respondedIds.size
+    // Add players without availability responses as unavailable
+    rosterMembers.forEach(rm => {
+      if (!respondedIds.has(rm.id)) {
+        unavailablePlayers.push({ id: rm.id, name: rm.full_name })
+      }
+    })
 
     setAvailabilitySummary({
-      available,
-      maybe,
-      unavailable,
-      total: rosterMemberIds.length
+      available: availablePlayers.length,
+      maybe: maybePlayers.length,
+      unavailable: unavailablePlayers.length,
+      total: rosterMembers.length
+    })
+
+    setAvailabilityDetails({
+      available: availablePlayers.sort((a, b) => a.name.localeCompare(b.name)),
+      maybe: maybePlayers.sort((a, b) => a.name.localeCompare(b.name)),
+      unavailable: unavailablePlayers.sort((a, b) => a.name.localeCompare(b.name))
     })
   }
 
@@ -342,12 +437,25 @@ export default function MatchDetailPage() {
   async function updateWarmup() {
     const supabase = createClient()
 
+    // Determine court value based on location mode
+    let courtValue: string | null = null
+    if (warmupStatus === 'booked') {
+      if (warmupLocationMode === 'venue' && selectedWarmupVenueId) {
+        const venue = warmupVenues.find(v => v.id === selectedWarmupVenueId)
+        if (venue) {
+          courtValue = venue.address ? `${venue.name} - ${venue.address}` : venue.name
+        }
+      } else {
+        courtValue = warmupCourt || null
+      }
+    }
+
     const { error } = await supabase
       .from('matches')
       .update({
         warm_up_status: warmupStatus,
         warm_up_time: warmupStatus === 'booked' ? warmupTime : null,
-        warm_up_court: warmupStatus === 'booked' ? warmupCourt : null,
+        warm_up_court: courtValue,
       })
       .eq('id', matchId)
 
@@ -691,61 +799,78 @@ Thank you`)
               )}
               {isEditing ? (
                 <>
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-muted-foreground" />
-                    <Input
-                      value={editedMatch.opponent_captain_name || ''}
-                      onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_name: e.target.value })}
-                      className="flex-1"
-                      placeholder="Opponent team captain name"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-muted-foreground" />
-                    <Input
-                      type="email"
-                      value={editedMatch.opponent_captain_email || ''}
-                      onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_email: e.target.value })}
-                      className="flex-1"
-                      placeholder="Opponent captain email"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-muted-foreground" />
-                    <Input
-                      type="tel"
-                      value={(editedMatch as any).opponent_captain_phone || ''}
-                      onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_phone: e.target.value } as any)}
-                      className="flex-1"
-                      placeholder="Opponent captain phone"
-                    />
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground w-20">Captain 1:</span>
+                      <Input
+                        value={editedMatch.opponent_captain_name || ''}
+                        onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_name: e.target.value })}
+                        className="flex-1"
+                        placeholder="Name"
+                      />
+                      <Input
+                        type="email"
+                        value={editedMatch.opponent_captain_email || ''}
+                        onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_email: e.target.value })}
+                        className="flex-1"
+                        placeholder="Email"
+                      />
+                      <Input
+                        type="tel"
+                        value={(editedMatch as any).opponent_captain_phone || ''}
+                        onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_phone: e.target.value } as any)}
+                        className="flex-1"
+                        placeholder="Phone"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs font-medium text-muted-foreground w-20">Captain 2:</span>
+                      <Input
+                        value={(editedMatch as any).opponent_captain_name2 || ''}
+                        onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_name2: e.target.value } as any)}
+                        className="flex-1"
+                        placeholder="Name"
+                      />
+                      <Input
+                        type="email"
+                        value={(editedMatch as any).opponent_captain_email2 || ''}
+                        onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_email2: e.target.value } as any)}
+                        className="flex-1"
+                        placeholder="Email"
+                      />
+                      <Input
+                        type="tel"
+                        value={(editedMatch as any).opponent_captain_phone2 || ''}
+                        onChange={(e) => setEditedMatch({ ...editedMatch, opponent_captain_phone2: e.target.value } as any)}
+                        className="flex-1"
+                        placeholder="Phone"
+                      />
+                    </div>
                   </div>
                 </>
               ) : (
-                (match.opponent_captain_name || (match as any).opponent_captain_phone) && (
-                  <>
-                    {match.opponent_captain_name && (
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-muted-foreground font-medium">Captain:</span>
-                        <span>{match.opponent_captain_name}</span>
-                      </div>
-                    )}
-                    {match.opponent_captain_email && (
-                      <div className="flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-muted-foreground" />
-                        <span>{match.opponent_captain_email}</span>
-                      </div>
-                    )}
-                    {(match as any).opponent_captain_phone && (
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-muted-foreground font-medium">Phone:</span>
-                        <span>{(match as any).opponent_captain_phone}</span>
-                      </div>
-                    )}
-                  </>
-                )
+                <>
+                  {(match.opponent_captain_name || match.opponent_captain_email || (match as any).opponent_captain_phone) && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground font-medium">Captain 1:</span>
+                      {match.opponent_captain_name && <span>{match.opponent_captain_name}</span>}
+                      {match.opponent_captain_email && <span className="text-muted-foreground">• {match.opponent_captain_email}</span>}
+                      {(match as any).opponent_captain_phone && <span className="text-muted-foreground">• {(match as any).opponent_captain_phone}</span>}
+                    </div>
+                  )}
+                  {((match as any).opponent_captain_name2 || (match as any).opponent_captain_email2 || (match as any).opponent_captain_phone2) && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground font-medium">Captain 2:</span>
+                      {(match as any).opponent_captain_name2 && <span>{(match as any).opponent_captain_name2}</span>}
+                      {(match as any).opponent_captain_email2 && <span className="text-muted-foreground">• {(match as any).opponent_captain_email2}</span>}
+                      {(match as any).opponent_captain_phone2 && <span className="text-muted-foreground">• {(match as any).opponent_captain_phone2}</span>}
+                    </div>
+                  )}
+                </>
               )}
             </div>
             {isEditing && (
@@ -767,15 +892,6 @@ Thank you`)
                     </>
                   )}
                 </Button>
-                <Button
-                  onClick={handleCancelEdit}
-                  variant="outline"
-                  disabled={saving}
-                  className="flex-1"
-                >
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Cancel
-                </Button>
                 {isCaptain && (
                   <Button
                     onClick={() => setShowDeleteAlert(true)}
@@ -792,47 +908,119 @@ Thank you`)
           </CardContent>
         </Card>
 
+        {/* Availability Summary */}
+        {availabilitySummary.total > 0 && (
+          <Card>
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-sm">Availability</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-2 space-y-3">
+              {/* Availability types in a row */}
+              <div className="flex items-start gap-4 flex-wrap">
+                {/* Available */}
+                <div className="flex-1 min-w-0">
+                  <button
+                    onClick={() => setExpandedAvailability(prev => ({ ...prev, available: !prev.available }))}
+                    className="flex items-center gap-1 text-sm hover:bg-accent/50 rounded-md p-1.5 -m-1.5 transition-colors w-full"
+                  >
+                    <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                    <span className="font-medium">{availabilitySummary.available}</span>
+                    <span className="text-muted-foreground">Available</span>
+                    <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform ml-auto flex-shrink-0", expandedAvailability.available && "rotate-180")} />
+                  </button>
+                  {expandedAvailability.available && availabilityDetails.available.length > 0 && (
+                    <div className="pl-5 pt-1.5 space-y-1">
+                      {availabilityDetails.available.map((player) => (
+                        <div key={player.id} className="text-xs text-muted-foreground">
+                          {player.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Tentative */}
+                <div className="flex-1 min-w-0">
+                  <button
+                    onClick={() => setExpandedAvailability(prev => ({ ...prev, maybe: !prev.maybe }))}
+                    className="flex items-center gap-1 text-sm hover:bg-accent/50 rounded-md p-1.5 -m-1.5 transition-colors w-full"
+                  >
+                    <HelpCircle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
+                    <span className="font-medium">{availabilitySummary.maybe}</span>
+                    <span className="text-muted-foreground">Tentative</span>
+                    <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform ml-auto flex-shrink-0", expandedAvailability.maybe && "rotate-180")} />
+                  </button>
+                  {expandedAvailability.maybe && availabilityDetails.maybe.length > 0 && (
+                    <div className="pl-5 pt-1.5 space-y-1">
+                      {availabilityDetails.maybe.map((player) => (
+                        <div key={player.id} className="text-xs text-muted-foreground">
+                          {player.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Unavailable */}
+                <div className="flex-1 min-w-0">
+                  <button
+                    onClick={() => setExpandedAvailability(prev => ({ ...prev, unavailable: !prev.unavailable }))}
+                    className="flex items-center gap-1 text-sm hover:bg-accent/50 rounded-md p-1.5 -m-1.5 transition-colors w-full"
+                  >
+                    <X className="h-4 w-4 text-red-600 flex-shrink-0" />
+                    <span className="font-medium">{availabilitySummary.unavailable}</span>
+                    <span className="text-muted-foreground">Unavailable</span>
+                    <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform ml-auto flex-shrink-0", expandedAvailability.unavailable && "rotate-180")} />
+                  </button>
+                  {expandedAvailability.unavailable && availabilityDetails.unavailable.length > 0 && (
+                    <div className="pl-5 pt-1.5 space-y-1">
+                      {availabilityDetails.unavailable.map((player) => (
+                        <div key={player.id} className="text-xs text-muted-foreground">
+                          {player.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2 border-t text-xs text-muted-foreground text-center">
+                {availabilitySummary.total} total players
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Lineup View */}
         {lineups.length > 0 && (
           <Card>
             <CardHeader className="p-4 pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm">Lineup</CardTitle>
-                <div className="flex gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowLineup(!showLineup)}
-                  >
-                    {showLineup ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                <Link href={`/teams/${teamId}/matches/${matchId}/lineup`}>
+                  <Button variant="outline" size="sm">
+                    <ClipboardList className="h-4 w-4 mr-1" />
+                    Edit
                   </Button>
-                  <Link href={`/teams/${teamId}/matches/${matchId}/lineup`}>
-                    <Button variant="outline" size="sm">
-                      <ClipboardList className="h-4 w-4 mr-1" />
-                      Edit
-                    </Button>
-                  </Link>
-                </div>
+                </Link>
               </div>
             </CardHeader>
-            {showLineup && (
-              <CardContent className="p-4 pt-2">
-                <div className="space-y-3">
-                  {lineups.map((lineup) => (
-                    <div key={lineup.id} className="border-b last:border-b-0 pb-2 last:pb-0">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Court {lineup.court_slot}</span>
-                      </div>
-                      <div className="text-sm text-muted-foreground mt-1">
-                        {lineup.player1?.full_name || 'TBD'}
-                        {lineup.player2 && ` & ${lineup.player2.full_name}`}
-                        {!lineup.player1 && !lineup.player2 && 'No players assigned'}
-                      </div>
+            <CardContent className="p-4 pt-2">
+              <div className="space-y-3">
+                {lineups.map((lineup) => (
+                  <div key={lineup.id} className="border-b last:border-b-0 pb-2 last:pb-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Court {lineup.court_slot}</span>
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            )}
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {lineup.player1?.full_name || 'TBD'}
+                      {lineup.player2 && ` & ${lineup.player2.full_name}`}
+                      {!lineup.player1 && !lineup.player2 && 'No players assigned'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
           </Card>
         )}
 
@@ -953,6 +1141,18 @@ Thank you`)
             </Button>
           </CardContent>
         </Card>
+
+        {/* Venue Dialog for Warmup */}
+        <VenueDialog
+          open={showWarmupVenueDialog}
+          onOpenChange={setShowWarmupVenueDialog}
+          venue={null}
+          teamId={teamId}
+          onSaved={async () => {
+            await loadWarmupVenues()
+            setShowWarmupVenueDialog(false)
+          }}
+        />
 
         {/* Match Day Checklist */}
         <Card>

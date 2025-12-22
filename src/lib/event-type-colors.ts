@@ -13,9 +13,9 @@ export function getEventTypeBadgeClass(eventType?: EventType): string {
     case 'social':
       return 'bg-pink-100 text-pink-800 border-pink-300 hover:bg-pink-200'
     case 'other':
-      return 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'
+      return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-600'
     default:
-      return 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'
+      return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-600'
   }
 }
 

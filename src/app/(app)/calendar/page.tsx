@@ -185,6 +185,7 @@ export default function CalendarPage() {
             teamName: team?.name || 'Unknown',
             teamColor: team?.color || null,
             name: `vs ${match.opponent_name}`,
+            is_home: match.is_home ?? false,
           })
         })
       }

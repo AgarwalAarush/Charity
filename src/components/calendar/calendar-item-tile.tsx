@@ -61,12 +61,18 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
                 variant="default" 
                 className="text-[10px] px-1 py-0 h-4"
               >
-                Match
+                Match {item.is_home !== undefined && (
+                  item.is_home ? (
+                    <span className="ml-1 bg-teal-500 text-white px-1 rounded">(H)</span>
+                  ) : (
+                    <span className="ml-1 bg-orange-500 text-white px-1 rounded">(A)</span>
+                  )
+                )}
               </Badge>
             ) : item.eventType === 'practice' ? (
               <Badge 
                 variant="default" 
-                className="text-[10px] px-1 py-0 h-4 bg-blue-500"
+                className="text-[10px] px-1 py-0 h-4 bg-blue-400 !text-white"
               >
                 Practice
               </Badge>

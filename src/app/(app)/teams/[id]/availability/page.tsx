@@ -196,7 +196,7 @@ export default function AvailabilityPage() {
         allItems.push({ 
           ...e, 
           type: 'event' as const,
-          event_type: e.event_type || null,
+          event_type: e.event_type || 'other', // Default to 'other' if null/undefined
           event_name: e.event_name,
           team_id: e.team_id
         } as CalendarItem)
@@ -706,45 +706,97 @@ export default function AvailabilityPage() {
                     HISTORY
                   </th>
                   {getDisplayedItems().map((item, index) => {
-                    const eventType = item.type === 'event' ? ((item as any).event_type || 'other') : null
-                    const isPractice = eventType === 'practice'
+                    // Explicitly check if item is a match or event
+                    const isMatch = item.type === 'match'
+                    const isEvent = item.type === 'event'
+                    
+                    // Get event type for events - check multiple possible locations for recurring events
+                    const eventType = isEvent ? (
+                      (item as any).event_type || 
+                      (item as any).eventType || 
+                      'other'
+                    ) : null
+                    const isPractice = eventType === 'practice' || (item as any).event_type === 'practice' || (item as any).eventType === 'practice'
                     const isWarmup = eventType === 'warmup'
                     const isSocial = eventType === 'social'
-                    const isOther = eventType === 'other' || !eventType
+                    const isOther = isEvent && (eventType === 'other' || !eventType || eventType === null)
+                    
                     return (
                       <th 
                         key={item.id} 
                         className={cn(
                           "p-2 text-center text-sm font-medium border-r min-w-[140px] relative border-l-4",
-                          item.type === 'match' 
-                            ? "bg-gray-50 border-l-gray-500"
+                          isMatch 
+                            ? "bg-green-200 border-l-green-500"
                             : isPractice
-                            ? "bg-blue-50 border-l-blue-500"
+                            ? "bg-blue-200 border-l-blue-500"
                             : isWarmup
-                            ? "bg-orange-50 border-l-orange-500"
+                            ? "bg-orange-200 border-l-orange-500"
                             : isSocial
-                            ? "bg-pink-50 border-l-pink-500"
-                            : isOther
-                            ? cn("bg-gray-50", getTeamColorClass(item.team_id, 'border', teamColor))
-                            : cn("bg-gray-50", getTeamColorClass(item.team_id, 'border', teamColor))
+                            ? "bg-pink-200 border-l-pink-500"
+                            :                           isOther
+                            ? "bg-purple-200 border-l-purple-500"
+                            : "bg-purple-200 border-l-purple-500",
+                          (isEvent || isMatch) && "cursor-pointer hover:opacity-90 transition-opacity"
                         )}
+                        onClick={() => {
+                          if (isEvent) {
+                            router.push(`/teams/${item.team_id}/events/${item.id}`)
+                          } else if (isMatch) {
+                            router.push(`/teams/${item.team_id}/matches/${item.id}`)
+                          }
+                        }}
                       >
                         <div className="flex items-center justify-center gap-1">
-                          {item.type === 'match' ? (
-                            <Badge variant="default" className="text-xs">MATCH {index + 1} {(item as Match).is_home ? '(H)' : '(A)'}</Badge>
-                          ) : isPractice ? (
-                            <Badge variant="default" className="text-xs bg-blue-500 text-white">PRACTICE {index + 1}</Badge>
-                          ) : isWarmup ? (
-                            <Badge variant="default" className="text-xs bg-orange-500 text-white">WARMUP {index + 1}</Badge>
-                          ) : isSocial ? (
-                            <Badge variant="default" className="text-xs bg-pink-500 text-white">SOCIAL {index + 1}</Badge>
-                          ) : eventType ? (
-                            <Badge variant="secondary" className={cn("text-xs", getEventTypeBadgeClass(eventType as any))}>
-                              {getEventTypeLabel(eventType as any)} {index + 1}
+                          {/* Don't render any badge for practice events - check this FIRST */}
+                          {(() => {
+                            // Debug: log practice detection
+                            if (isEvent && ((item as any).event_type === 'practice' || eventType === 'practice' || isPractice)) {
+                              console.log('Practice event detected - no badge:', { 
+                                event_type: (item as any).event_type, 
+                                eventType, 
+                                isPractice,
+                                item: item 
+                              })
+                            }
+                            return null
+                          })()}
+                          {isPractice || eventType === 'practice' || (item as any).event_type === 'practice' || (isEvent && eventType && getEventTypeLabel(eventType as any) === 'Practice') ? (
+                            null
+                          ) : isMatch ? (
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-green-500 text-white">
+                              Match {index + 1} 
+                              {(item as Match).is_home ? (
+                                <span className="ml-1 bg-teal-500 text-white px-1 rounded">(H)</span>
+                              ) : (
+                                <span className="ml-1 bg-orange-500 text-white px-1 rounded">(A)</span>
+                              )}
                             </Badge>
+                          ) : isWarmup ? (
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-orange-500">
+                              Warmup
+                            </Badge>
+                          ) : isSocial ? (
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-pink-500">
+                              Social
+                            </Badge>
+                          ) : eventType === 'other' ? (
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-purple-500">
+                              Other
+                            </Badge>
+                          ) : eventType && eventType !== 'practice' && getEventTypeLabel(eventType as any) !== 'Practice' ? (
+                            <Badge variant="default" className={cn("text-[10px] px-1 py-0 h-4", 
+                              eventType === 'warmup' ? 'bg-orange-500' :
+                              eventType === 'social' ? 'bg-pink-500' :
+                              'bg-purple-500'
+                            )}>
+                              {getEventTypeLabel(eventType as any)}
+                            </Badge>
+                          ) : eventType === 'practice' || getEventTypeLabel(eventType as any) === 'Practice' ? (
+                            null
                           ) : (
-                            <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-800">
-                              EVENT {index + 1}
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-purple-500">
+                              Event
                             </Badge>
                           )}
                           {isCaptain && (
@@ -848,6 +900,9 @@ export default function AvailabilityPage() {
                     const displayName = item.type === 'match' 
                       ? ((item as Match).opponent_name || 'TBD')
                       : ((item as any).event_name || 'Event')
+                    const isMatch = item.type === 'match'
+                    const isHome = isMatch && (item as Match).is_home
+                    const isAway = isMatch && !(item as Match).is_home
                     return (
                       <th 
                         key={item.id} 
@@ -864,8 +919,18 @@ export default function AvailabilityPage() {
                           }
                         }}
                       >
-                        <div className="text-xs font-medium text-left px-1">
+                        <div className="text-xs font-medium text-left px-1 flex items-center gap-1">
                           {displayName}
+                          {isHome && (
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-teal-500 text-white">
+                              Home
+                            </Badge>
+                          )}
+                          {isAway && (
+                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-orange-500 text-white">
+                              Away
+                            </Badge>
+                          )}
                         </div>
                       </th>
                     )

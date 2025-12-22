@@ -21,6 +21,7 @@ export interface CalendarItem {
   teamName: string
   teamColor?: string | null // Saved team color from database
   name: string // opponent name for match, event name for event
+  is_home?: boolean // Only for matches
   availabilityStatus?: 'available' | 'unavailable' | 'maybe' | 'late'
   eventType?: EventType // Only for events
   availabilitySummary?: {
