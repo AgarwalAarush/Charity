@@ -34,7 +34,6 @@ type Event = {
   [key: string]: any
 }
 import { formatDate, formatTime, cn } from '@/lib/utils'
-import { createClient } from '@/lib/supabase/client'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import {
   Users,
