@@ -8,7 +8,31 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { Team, Match, Event } from '@/types/database.types'
+import { Team } from '@/types/database.types'
+
+// Define types inline since they're not exported from database.types
+type Match = {
+  id: string
+  team_id: string
+  date: string
+  time: string
+  opponent_name: string
+  venue?: string | null
+  is_home: boolean
+  [key: string]: any
+}
+
+type Event = {
+  id: string
+  team_id: string
+  event_name: string
+  date: string
+  time: string
+  location?: string | null
+  event_type?: string | null
+  duration?: number | null
+  [key: string]: any
+}
 import { formatDate, formatTime, cn } from '@/lib/utils'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import {
@@ -20,7 +44,11 @@ import {
   Settings,
   ListChecks,
   MessageCircle,
-  CalendarPlus
+  CalendarPlus,
+  Check,
+  X,
+  HelpCircle,
+  Clock
 } from 'lucide-react'
 import { AddMatchDialog } from '@/components/teams/add-match-dialog'
 import { AddEventDialog } from '@/components/teams/add-event-dialog'
@@ -32,6 +60,7 @@ export default function TeamDetailPage() {
   const [team, setTeam] = useState<Team | null>(null)
   const [matches, setMatches] = useState<Match[]>([])
   const [events, setEvents] = useState<Event[]>([])
+  const [eventAvailability, setEventAvailability] = useState<Record<string, string>>({})
   const [rosterCount, setRosterCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showAddMatchDialog, setShowAddMatchDialog] = useState(false)
@@ -130,8 +159,39 @@ export default function TeamDetailPage() {
     // Set events data if available, otherwise default to empty array
     if (eventData) {
       setEvents(eventData)
+      
+      // Load availability for events if user is logged in
+      if (user && eventData.length > 0) {
+        // Get user's roster member ID for this team
+        const { data: rosterMember } = await supabase
+          .from('roster_members')
+          .select('id')
+          .eq('team_id', teamId)
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .maybeSingle()
+        
+        if (rosterMember) {
+          const eventIds = eventData.map(e => e.id)
+          const { data: availabilityData } = await supabase
+            .from('availability')
+            .select('event_id, status')
+            .eq('roster_member_id', rosterMember.id)
+            .in('event_id', eventIds)
+          
+          // Build availability map
+          const availMap: Record<string, string> = {}
+          availabilityData?.forEach(avail => {
+            if (avail.event_id) {
+              availMap[avail.event_id] = avail.status || 'unavailable'
+            }
+          })
+          setEventAvailability(availMap)
+        }
+      }
     } else {
       setEvents([])
+      setEventAvailability({})
     }
 
     const { count } = await supabase
@@ -451,7 +511,32 @@ export default function TeamDetailPage() {
                           </p>
                         )}
                       </div>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          const status = eventAvailability[event.id]
+                          if (!status) {
+                            return (
+                              <span className="text-xs text-muted-foreground">Not set</span>
+                            )
+                          }
+                          const statusConfig = {
+                            available: { icon: Check, label: 'Available', color: 'text-green-500' },
+                            unavailable: { icon: X, label: 'Unavailable', color: 'text-red-500' },
+                            maybe: { icon: HelpCircle, label: 'Maybe', color: 'text-yellow-500' },
+                            late: { icon: Clock, label: 'Running Late', color: 'text-orange-500' },
+                            last_resort: { icon: HelpCircle, label: 'Last Resort', color: 'text-purple-500' },
+                          }
+                          const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.unavailable
+                          const Icon = config.icon
+                          return (
+                            <div className="flex items-center gap-1">
+                              <Icon className={cn('h-3 w-3', config.color)} />
+                              <span className={cn('text-xs', config.color)}>{config.label}</span>
+                            </div>
+                          )
+                        })()}
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

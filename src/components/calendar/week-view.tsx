@@ -3,16 +3,20 @@
 import { CalendarDay, CalendarItem, getWeekDays, groupItemsByDate, getWeekdayNames } from '@/lib/calendar-utils'
 import { CalendarItemTile } from './calendar-item-tile'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { format } from 'date-fns'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface WeekViewProps {
   currentDate: Date
   items: CalendarItem[]
   numWeeks?: number
+  onPrevious?: () => void
+  onNext?: () => void
 }
 
-export function WeekView({ currentDate, items, numWeeks = 2 }: WeekViewProps) {
+export function WeekView({ currentDate, items, numWeeks = 2, onPrevious, onNext }: WeekViewProps) {
   const weekDays = getWeekDays(currentDate, numWeeks)
   const weekdayNames = getWeekdayNames(true)
   const itemsByDate = groupItemsByDate(items)
@@ -85,8 +89,28 @@ export function WeekView({ currentDate, items, numWeeks = 2 }: WeekViewProps) {
     <div className="space-y-1 pb-2">
       {/* Header with month and weekday names */}
       <div className="grid grid-cols-7 gap-1 mb-2">
-        <div className="col-span-7 text-center mb-1">
+        <div className="col-span-7 flex items-center justify-center gap-2 mb-1">
+          {onPrevious && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onPrevious}
+              className="h-8 w-8"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          )}
           <h3 className="text-lg font-semibold">{monthName}</h3>
+          {onNext && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onNext}
+              className="h-8 w-8"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          )}
         </div>
         {weekdayNames.map((dayName, index) => (
           <div key={index} className="text-center p-2 bg-muted/30 rounded-md">

@@ -278,36 +278,6 @@ export default function CalendarPage() {
         {/* Date Navigation */}
         <Card>
           <CardContent className="p-3">
-            <div className="flex items-center justify-between">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handlePrevious}
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-
-              <div className="flex items-center gap-2">
-                {viewMode === 'month' && (
-                  <h2 className="text-lg font-semibold">
-                    {formatCalendarDate(currentDate, 'MMMM yyyy')}
-                  </h2>
-                )}
-                {viewMode === 'week' && (
-                  <h2 className="text-lg font-semibold">
-                    {formatCalendarDate(currentDate, 'MMMM yyyy')}
-                  </h2>
-                )}
-              </div>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleNext}
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
-            </div>
 
             <div className="flex items-center gap-2 mt-3">
               <Button
@@ -449,7 +419,13 @@ export default function CalendarPage() {
             </CardContent>
           </Card>
         ) : viewMode === 'week' ? (
-          <WeekView currentDate={currentDate} items={calendarItems} numWeeks={numWeeks} />
+          <WeekView 
+            currentDate={currentDate} 
+            items={calendarItems} 
+            numWeeks={numWeeks}
+            onPrevious={handlePrevious}
+            onNext={handleNext}
+          />
         ) : (
           <MonthView currentDate={currentDate} items={calendarItems} />
         )}
