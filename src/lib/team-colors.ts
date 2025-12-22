@@ -32,8 +32,16 @@ function hashCode(str: string): number {
 
 /**
  * Get team color object based on team ID
+ * If a savedColor is provided, use that; otherwise fall back to hash-based assignment
  */
-export function getTeamColor(teamId: string) {
+export function getTeamColor(teamId: string, savedColor?: string | null) {
+  // If team has a saved color, use it
+  if (savedColor) {
+    const color = TEAM_COLORS.find(c => c.name === savedColor)
+    if (color) return color
+  }
+  
+  // Fall back to hash-based assignment
   const hash = hashCode(teamId)
   const index = hash % TEAM_COLORS.length
   return TEAM_COLORS[index]
@@ -41,9 +49,12 @@ export function getTeamColor(teamId: string) {
 
 /**
  * Get Tailwind CSS class for team color background
+ * @param teamId - The team ID
+ * @param type - The type of color class to return
+ * @param savedColor - Optional saved color name from database
  */
-export function getTeamColorClass(teamId: string, type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg'): string {
-  const color = getTeamColor(teamId)
+export function getTeamColorClass(teamId: string, type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg', savedColor?: string | null): string {
+  const color = getTeamColor(teamId, savedColor)
   
   switch (type) {
     case 'bg':

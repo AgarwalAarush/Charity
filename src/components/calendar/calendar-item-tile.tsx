@@ -48,8 +48,8 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
       onClick={handleClick}
       className={cn(
         'rounded-md cursor-pointer transition-colors hover:opacity-80 border-l-4',
-        getTeamColorClass(item.teamId, 'border'),
-        getTeamColorClass(item.teamId, 'bgLight'),
+        getTeamColorClass(item.teamId, 'border', item.teamColor),
+        getTeamColorClass(item.teamId, 'bgLight', item.teamColor),
         compact ? 'p-1.5' : 'p-2'
       )}
     >

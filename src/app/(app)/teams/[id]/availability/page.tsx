@@ -84,6 +84,7 @@ export default function AvailabilityPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [teamName, setTeamName] = useState<string>('')
+  const [teamColor, setTeamColor] = useState<string | null>(null)
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match']) // Default to matches only
   const [openPopovers, setOpenPopovers] = useState<Record<string, boolean>>({})
   const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'last_resort'>>>({})
@@ -119,12 +120,15 @@ export default function AvailabilityPage() {
     // Load team configuration and name
     const { data: teamData } = await supabase
       .from('teams')
-      .select('name, captain_id, co_captain_id, total_lines, line_match_types')
+      .select('name, captain_id, co_captain_id, total_lines, line_match_types, color')
       .eq('id', teamId)
       .single()
     
     if (teamData?.name) {
       setTeamName(teamData.name)
+    }
+    if (teamData) {
+      setTeamColor((teamData as any).color || null)
     }
 
     let teamTotalLines = 3 // Default to 3 courts
@@ -779,7 +783,7 @@ export default function AvailabilityPage() {
                         key={item.id} 
                         className={cn(
                           "p-2 border-r cursor-pointer hover:bg-gray-100 transition-colors",
-                          getTeamColorClass(item.team_id, 'border'),
+                          getTeamColorClass(item.team_id, 'border', teamColor),
                           "border-l-4"
                         )}
                         onClick={() => {
@@ -816,7 +820,7 @@ export default function AvailabilityPage() {
                         key={item.id} 
                         className={cn(
                           "p-2 border-r cursor-pointer hover:bg-gray-100 transition-colors",
-                          getTeamColorClass(item.team_id, 'border'),
+                          getTeamColorClass(item.team_id, 'border', teamColor),
                           "border-l-4"
                         )}
                         onClick={() => {

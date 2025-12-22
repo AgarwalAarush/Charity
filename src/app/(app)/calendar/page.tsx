@@ -173,7 +173,7 @@ export default function CalendarPage() {
     if (showEvents) {
       let query = supabase
         .from('events')
-        .select('*, teams!inner(id, name)')
+        .select('*, teams!inner(id, name, color)')
         .in('team_id', teamIds)
         .gte('date', dateRange.start)
       
@@ -187,13 +187,15 @@ export default function CalendarPage() {
 
       if (events) {
         events.forEach((event: any) => {
+          const team = Array.isArray(event.teams) ? event.teams[0] : event.teams
           items.push({
             id: event.id,
             type: 'event',
             date: event.date,
             time: event.time,
             teamId: event.team_id,
-            teamName: event.teams.name,
+            teamName: team?.name || 'Unknown',
+            teamColor: team?.color || null,
             name: event.event_name,
             eventType: event.event_type || undefined,
           })
