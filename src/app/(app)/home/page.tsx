@@ -27,8 +27,13 @@ import {
   ChevronRight,
   Check,
   X,
-  HelpCircle
+  HelpCircle,
+  Bell,
+  Megaphone
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { getEventTypes, getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 
 interface UpcomingMatch {
   id: string
@@ -47,6 +52,22 @@ interface UpcomingMatch {
   }
 }
 
+interface UpcomingEvent {
+  id: string
+  date: string
+  time: string
+  event_name: string
+  event_type?: string | null
+  location: string | null
+  team_id: string
+  team_name: string
+  availability?: {
+    status: string
+  }
+}
+
+type CalendarItem = (UpcomingMatch & { type: 'match' }) | (UpcomingEvent & { type: 'event' })
+
 interface Team {
   id: string
   name: string
@@ -57,9 +78,21 @@ interface Team {
 export default function HomePage() {
   const [nextMatch, setNextMatch] = useState<UpcomingMatch | null>(null)
   const [upcomingMatches, setUpcomingMatches] = useState<UpcomingMatch[]>([])
+  const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([])
+  const [allItems, setAllItems] = useState<CalendarItem[]>([])
+  const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match', 'practice', 'warmup'])
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
   const [rosterMemberMap, setRosterMemberMap] = useState<Record<string, string>>({}) // matchId -> rosterMemberId
+  const [teamRoster, setTeamRoster] = useState<any[]>([])
+  const [teamStats, setTeamStats] = useState<{
+    wins: number
+    losses: number
+    ties: number
+    winPercentage: number
+  } | null>(null)
+  const [recentMatches, setRecentMatches] = useState<any[]>([])
   const [lifetimeStats, setLifetimeStats] = useState<{
     totalMatches: number
     wins: number
@@ -73,6 +106,12 @@ export default function HomePage() {
     // Check and link roster members on first load (in case they were added before account creation)
     linkRosterMembersIfNeeded()
   }, [])
+
+  useEffect(() => {
+    if (selectedTeamId) {
+      loadTeamData(selectedTeamId)
+    }
+  }, [selectedTeamId])
 
   async function linkRosterMembersIfNeeded() {
     try {
@@ -146,14 +185,32 @@ export default function HomePage() {
       .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
 
     // Combine and deduplicate teams
+    const membershipTeams: Team[] = []
+    memberships?.forEach(m => {
+      const teamData = Array.isArray(m.teams) ? m.teams[0] : m.teams
+      if (teamData) {
+        membershipTeams.push({
+          id: teamData.id,
+          name: teamData.name,
+          league_format: teamData.league_format,
+          season: teamData.season,
+          captain_id: '',
+        } as Team)
+      }
+    })
     const allTeams = [
-      ...(memberships?.map(m => m.teams as Team).filter(Boolean) || []),
+      ...membershipTeams,
       ...(captainTeams || [])
     ]
     const uniqueTeams = allTeams.filter((team, index, self) =>
       index === self.findIndex(t => t.id === team.id)
     )
     setTeams(uniqueTeams)
+    
+    // Set first team as selected by default
+    if (uniqueTeams.length > 0 && !selectedTeamId) {
+      setSelectedTeamId(uniqueTeams[0].id)
+    }
 
     if (!memberships || memberships.length === 0) {
       setLoading(false)
@@ -276,9 +333,11 @@ export default function HomePage() {
         status = 'in_lineup'
         courtSlot = userLineup.court_slot
         if (userLineup.player1_id === memberRosterId && userLineup.player2) {
-          partnerName = (userLineup.player2 as { full_name: string }).full_name
+          const player2 = Array.isArray(userLineup.player2) ? userLineup.player2[0] : userLineup.player2
+          partnerName = (player2 as any)?.full_name
         } else if (userLineup.player1) {
-          partnerName = (userLineup.player1 as { full_name: string }).full_name
+          const player1 = Array.isArray(userLineup.player1) ? userLineup.player1[0] : userLineup.player1
+          partnerName = (player1 as any)?.full_name
         }
       } else if (lineups?.some(l => l.match_id === match.id)) {
         // Lineup posted but user not in it
@@ -295,7 +354,7 @@ export default function HomePage() {
         venue: match.venue,
         is_home: match.is_home,
         team_id: match.team_id,
-        team_name: (match.teams as { name: string }).name,
+        team_name: (Array.isArray(match.teams) ? match.teams[0] : match.teams)?.name || 'Unknown',
         status,
         partner_name: partnerName,
         court_slot: courtSlot,
@@ -310,10 +369,139 @@ export default function HomePage() {
     setNextMatch(nextInLineup || processedMatches[0] || null)
     setUpcomingMatches(processedMatches)
     
+    // Load upcoming events
+    const { data: events } = await supabase
+      .from('events')
+      .select(`
+        id,
+        date,
+        time,
+        event_name,
+        event_type,
+        location,
+        team_id,
+        teams (
+          name
+        )
+      `)
+      .in('team_id', teamIds)
+      .gte('date', today)
+      .order('date', { ascending: true })
+      .order('time', { ascending: true })
+      .limit(10)
+
+    // Get availability for events
+    const eventIds = events?.map(e => e.id) || []
+    const { data: eventAvailabilities } = await supabase
+      .from('availability')
+      .select('*')
+      .in('event_id', eventIds)
+      .in('roster_member_id', rosterMemberIds)
+
+    // Process events
+    const processedEvents: UpcomingEvent[] = (events || []).map(event => {
+      const membership = memberships.find(m => m.team_id === event.team_id)
+      const memberRosterId = membership?.id
+      
+      const availability = eventAvailabilities?.find(a =>
+        a.event_id === event.id && a.roster_member_id === memberRosterId
+      )
+
+      return {
+        id: event.id,
+        date: event.date,
+        time: event.time,
+        event_name: event.event_name,
+        event_type: event.event_type,
+        location: event.location,
+        team_id: event.team_id,
+        team_name: (Array.isArray(event.teams) ? event.teams[0] : event.teams)?.name || 'Unknown',
+        availability: availability ? { status: availability.status } : undefined
+      }
+    })
+
+    setUpcomingEvents(processedEvents)
+
+    // Combine matches and events, sort by date/time
+    const combined: CalendarItem[] = [
+      ...processedMatches.map(m => ({ ...m, type: 'match' as const })),
+      ...processedEvents.map(e => ({ ...e, type: 'event' as const }))
+    ].sort((a, b) => {
+      const dateCompare = a.date.localeCompare(b.date)
+      if (dateCompare !== 0) return dateCompare
+      return a.time.localeCompare(b.time)
+    })
+    setAllItems(combined)
+
+    // Load team-specific data if a team is selected
+    if (selectedTeamId || uniqueTeams.length > 0) {
+      const teamToLoad = selectedTeamId || uniqueTeams[0].id
+      await loadTeamData(teamToLoad)
+    }
+    
     // Load lifetime statistics
     await loadLifetimeStats()
     
+    // Load recent matches
+    await loadRecentMatches(teamIds)
+    
     setLoading(false)
+  }
+
+  async function loadTeamData(teamId: string) {
+    const supabase = createClient()
+    
+    // Load roster
+    const { data: roster } = await supabase
+      .from('roster_members')
+      .select('id, full_name, email, phone, ntrp_rating')
+      .eq('team_id', teamId)
+      .eq('is_active', true)
+      .order('full_name')
+    
+    setTeamRoster(roster || [])
+
+    // Load team statistics
+    const { data: stats } = await supabase
+      .from('team_statistics')
+      .select('wins, losses, ties, win_percentage')
+      .eq('team_id', teamId)
+      .single()
+
+    if (stats) {
+      setTeamStats({
+        wins: stats.wins || 0,
+        losses: stats.losses || 0,
+        ties: stats.ties || 0,
+        winPercentage: stats.win_percentage || 0
+      })
+    }
+  }
+
+  async function loadRecentMatches(teamIds: string[]) {
+    const supabase = createClient()
+    const today = new Date().toISOString().split('T')[0]
+    
+    const { data: matches } = await supabase
+      .from('matches')
+      .select(`
+        id,
+        date,
+        opponent_name,
+        is_home,
+        result,
+        team_id,
+        teams (
+          name
+        )
+      `)
+      .in('team_id', teamIds)
+      .lt('date', today)
+      .not('result', 'is', null)
+      .order('date', { ascending: false })
+      .limit(5)
+
+    setRecentMatches(matches || [])
   }
 
   async function loadLifetimeStats() {
@@ -461,8 +649,23 @@ export default function HomePage() {
       <Header title="TennisLife" />
 
       <main className="flex-1 p-4">
+        {/* Announcements Section */}
+        <Card className="mb-4 border-blue-200 bg-blue-50">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <Megaphone className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-blue-900 mb-1">Announcements</h3>
+                <p className="text-sm text-blue-800">
+                  Welcome to TennisLife! Check your upcoming events and manage your availability.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left column - Upcoming Matches (takes 2/3 on large screens) */}
+          {/* Left column - Upcoming Events (takes 2/3 on large screens) */}
           <div className="lg:col-span-2 space-y-4">
         {/* Hero Card - Next Playing */}
         {nextMatch && nextMatch.status === 'in_lineup' ? (
@@ -519,22 +722,75 @@ export default function HomePage() {
           </Card>
         )}
 
-        {/* Upcoming Matches List */}
+        {/* Event Type Filter */}
+        <Card>
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-muted-foreground">Show:</span>
+              <Button
+                variant={selectedEventTypes.includes('match') ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (selectedEventTypes.includes('match')) {
+                    setSelectedEventTypes(selectedEventTypes.filter(t => t !== 'match'))
+                  } else {
+                    setSelectedEventTypes([...selectedEventTypes, 'match'])
+                  }
+                }}
+              >
+                Matches
+              </Button>
+              {getEventTypes().map(({ value, label }) => (
+                <Button
+                  key={value}
+                  variant={selectedEventTypes.includes(value) ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    if (selectedEventTypes.includes(value)) {
+                      setSelectedEventTypes(selectedEventTypes.filter(t => t !== value))
+                    } else {
+                      setSelectedEventTypes([...selectedEventTypes, value])
+                    }
+                  }}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Upcoming Events List */}
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
-            Upcoming Matches
+            Upcoming Events
           </h2>
 
-          {upcomingMatches.length === 0 ? (
+          {allItems.filter(item => {
+            if (item.type === 'match') {
+              return selectedEventTypes.includes('match')
+            } else {
+              return selectedEventTypes.includes(item.event_type || 'other')
+            }
+          }).length === 0 ? (
             <Card>
               <CardContent className="py-6 text-center">
-                <p className="text-muted-foreground">No upcoming matches</p>
+                <p className="text-muted-foreground">No upcoming events</p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-2">
-              {upcomingMatches.map((match) => (
-                <Link key={match.id} href={`/teams/${match.team_id}/matches/${match.id}`}>
+              {allItems.filter(item => {
+                if (item.type === 'match') {
+                  return selectedEventTypes.includes('match')
+                } else {
+                  return selectedEventTypes.includes(item.event_type || 'other')
+                }
+              }).map((item) => {
+                if (item.type === 'match') {
+                  const match = item as UpcomingMatch
+                  return (
+                    <Link key={match.id} href={`/teams/${match.team_id}/matches/${match.id}`}>
                   <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between gap-3">
@@ -606,17 +862,58 @@ export default function HomePage() {
                     </CardContent>
                   </Card>
                 </Link>
-              ))}
+                  )
+                } else {
+                  const event = item as UpcomingEvent
+                  return (
+                    <Link key={event.id} href={`/teams/${event.team_id}/events/${event.id}`}>
+                      <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                {event.event_type && (
+                                  <Badge 
+                                    variant="secondary" 
+                                    className={getEventTypeBadgeClass(event.event_type as any)}
+                                  >
+                                    {getEventTypeLabel(event.event_type as any)}
+                                  </Badge>
+                                )}
+                                <span className="font-medium truncate">
+                                  {event.event_name}
+                                </span>
+                                <Badge variant="outline" className="text-xs shrink-0">
+                                  {event.team_name}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {formatDate(event.date, 'MMM d')} at {formatTime(event.time)}
+                              </div>
+                              {event.location && (
+                                <div className="text-xs text-muted-foreground mt-1 truncate">
+                                  {event.location}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  )
+                }
+              })}
             </div>
           )}
         </div>
           </div>
 
-          {/* Right column - My Teams */}
+          {/* Right column - Team Info */}
           <div className="space-y-4">
+            {/* Team Selector */}
             <div>
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1 mb-2">
-                My Teams
+                Select Team
               </h2>
               {teams.length === 0 ? (
                 <Card>
@@ -626,38 +923,98 @@ export default function HomePage() {
                   </CardContent>
                 </Card>
               ) : (
-                <div className="space-y-4">
-                  {teams.map((team) => (
-                    <Link key={team.id} href={`/teams/${team.id}`} className="block mb-3">
+                <Select value={selectedTeamId || ''} onValueChange={setSelectedTeamId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a team" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {teams.map((team) => (
+                      <SelectItem key={team.id} value={team.id}>
+                        {team.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            {/* Team Statistics */}
+            {selectedTeamId && teamStats && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Team Record</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold mb-2">
+                    {teamStats.wins}-{teamStats.losses}
+                    {teamStats.ties > 0 && `-${teamStats.ties}`}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {teamStats.winPercentage.toFixed(1)}% win rate
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Recent Match Results */}
+            {selectedTeamId && recentMatches.length > 0 && (
+              <div>
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1 mb-2">
+                  Recent Results
+                </h2>
+                <div className="space-y-2">
+                  {recentMatches.map((match: any) => (
+                    <Link key={match.id} href={`/teams/${match.team_id}/matches/${match.id}`}>
                       <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
                         <CardContent className="p-3">
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center justify-between">
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium truncate text-sm">{team.name}</p>
-                              {(team.league_format || team.season) && (
-                                <div className="flex items-center gap-2 mt-1">
-                                  {team.league_format && (
-                                    <Badge variant="outline" className="text-xs">
-                                      {team.league_format}
-                                    </Badge>
-                                  )}
-                                  {team.season && (
-                                    <span className="text-xs text-muted-foreground truncate">
-                                      {team.season}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                              <div className="text-sm font-medium truncate">
+                                vs {match.opponent_name}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {formatDate(match.date, 'MMM d')}
+                              </div>
                             </div>
-                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <Badge 
+                              variant={match.result === 'won' ? 'default' : match.result === 'lost' ? 'destructive' : 'secondary'}
+                              className="shrink-0"
+                            >
+                              {match.result === 'won' ? 'W' : match.result === 'lost' ? 'L' : 'T'}
+                            </Badge>
                           </div>
                         </CardContent>
                       </Card>
                     </Link>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {/* Team Roster */}
+            {selectedTeamId && teamRoster.length > 0 && (
+              <div>
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1 mb-2">
+                  Roster
+                </h2>
+                <Card>
+                  <CardContent className="p-3">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {teamRoster.map((member) => (
+                        <div key={member.id} className="flex items-center gap-2 text-sm">
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                              {member.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="truncate">{member.full_name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
             {/* Lifetime Statistics */}
             {lifetimeStats && lifetimeStats.totalMatches > 0 && (

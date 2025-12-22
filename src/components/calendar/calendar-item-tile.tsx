@@ -47,8 +47,9 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
     <div
       onClick={handleClick}
       className={cn(
-        'rounded-md cursor-pointer transition-colors hover:bg-accent/50 border-l-4',
+        'rounded-md cursor-pointer transition-colors hover:opacity-80 border-l-4',
         getTeamColorClass(item.teamId, 'border'),
+        getTeamColorClass(item.teamId, 'bgLight'),
         compact ? 'p-1.5' : 'p-2'
       )}
     >
@@ -61,6 +62,20 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
                 className="text-[10px] px-1 py-0 h-4"
               >
                 Match
+              </Badge>
+            ) : item.eventType === 'practice' ? (
+              <Badge 
+                variant="default" 
+                className="text-[10px] px-1 py-0 h-4 bg-blue-500"
+              >
+                Practice
+              </Badge>
+            ) : item.eventType === 'warmup' ? (
+              <Badge 
+                variant="default" 
+                className="text-[10px] px-1 py-0 h-4 bg-orange-500"
+              >
+                Warmup
               </Badge>
             ) : item.eventType ? (
               <Badge 

@@ -50,6 +50,7 @@ import { formatDate, formatTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import { EditEventDialog } from '@/components/teams/edit-event-dialog'
+import { useIsSystemAdmin } from '@/hooks/use-is-system-admin'
 import {
   Select,
   SelectContent,
@@ -65,7 +66,6 @@ import {
   Check,
   X,
   HelpCircle,
-  Clock as LateClock,
   Trash2,
   Edit,
   ChevronDown,
@@ -107,18 +107,18 @@ export default function EventDetailPage() {
   const [editedEvent, setEditedEvent] = useState<Partial<Event>>({})
   const [saving, setSaving] = useState(false)
   const [showDeleteAlert, setShowDeleteAlert] = useState(false)
+  const [showAvailabilityManager, setShowAvailabilityManager] = useState(false)
   const [myAvailability, setMyAvailability] = useState<Availability | null>(null)
   const [myRosterMemberId, setMyRosterMemberId] = useState<string | null>(null)
+  const { isAdmin: isSystemAdmin } = useIsSystemAdmin()
   const [attendees, setAttendees] = useState<{
     available: AttendeeInfo[]
     unavailable: AttendeeInfo[]
     maybe: AttendeeInfo[]
-    late: AttendeeInfo[]
   }>({
     available: [],
     unavailable: [],
-    maybe: [],
-    late: []
+    maybe: []
   })
   const { toast } = useToast()
 
@@ -212,8 +212,7 @@ export default function EventDetailPage() {
       const grouped = {
         available: [] as AttendeeInfo[],
         unavailable: [] as AttendeeInfo[],
-        maybe: [] as AttendeeInfo[],
-        late: [] as AttendeeInfo[]
+        maybe: [] as AttendeeInfo[]
       }
 
       rosterMembers.forEach(member => {
@@ -226,8 +225,6 @@ export default function EventDetailPage() {
           grouped.available.push(info)
         } else if (avail.status === 'maybe') {
           grouped.maybe.push(info)
-        } else if (avail.status === 'late') {
-          grouped.late.push(info)
         }
       })
 
@@ -235,11 +232,6 @@ export default function EventDetailPage() {
     }
 
     setLoading(false)
-
-    // Auto-enter edit mode for captains when event loads
-    if (eventData && teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
-      setIsEditing(true)
-    }
   }
 
   async function handleDeleteConfirm() {
@@ -323,6 +315,74 @@ export default function EventDetailPage() {
     loadEventData()
   }
 
+  async function updatePlayerAvailability(rosterMemberId: string, newStatus: string) {
+    if (!isCaptain && !isSystemAdmin) {
+      toast({
+        title: 'Permission Denied',
+        description: 'Only captains and system admins can manage availability',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const supabase = createClient()
+
+    // Find existing availability for this player and event
+    const { data: existing } = await supabase
+      .from('availability')
+      .select('id')
+      .eq('roster_member_id', rosterMemberId)
+      .eq('event_id', eventId)
+      .maybeSingle()
+
+    if (existing) {
+      // Update existing
+      const { error } = await supabase
+        .from('availability')
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    } else {
+      // Create new
+      const { error } = await supabase
+        .from('availability')
+        .insert({
+          roster_member_id: rosterMemberId,
+          event_id: eventId,
+          status: newStatus,
+          responded_at: new Date().toISOString(),
+        })
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    toast({
+      title: 'Updated',
+      description: 'Availability updated successfully',
+    })
+
+    // Reload data
+    loadEventData()
+  }
+
   function getStatusLabel(status: string | undefined) {
     switch (status) {
       case 'available':
@@ -331,8 +391,6 @@ export default function EventDetailPage() {
         return 'Unavailable'
       case 'maybe':
         return 'Maybe'
-      case 'late':
-        return 'Running Late'
       default:
         return 'Set RSVP'
     }
@@ -346,8 +404,6 @@ export default function EventDetailPage() {
         return <X className="h-4 w-4 text-red-500" />
       case 'maybe':
         return <HelpCircle className="h-4 w-4 text-yellow-500" />
-      case 'late':
-        return <LateClock className="h-4 w-4 text-orange-500" />
       default:
         return <ChevronDown className="h-4 w-4" />
     }
@@ -432,8 +488,8 @@ export default function EventDetailPage() {
     )
   }
 
-  const totalResponses = attendees.available.length + attendees.maybe.length + attendees.late.length + attendees.unavailable.length
-  const goingCount = attendees.available.length + attendees.late.length
+  const totalResponses = attendees.available.length + attendees.maybe.length + attendees.unavailable.length
+  const goingCount = attendees.available.length
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -648,12 +704,6 @@ export default function EventDetailPage() {
                   <span>Available</span>
                 </div>
               </SelectItem>
-              <SelectItem value="late">
-                <div className="flex items-center gap-2">
-                  <LateClock className="h-4 w-4 text-orange-500" />
-                  <span>Running Late</span>
-                </div>
-              </SelectItem>
               <SelectItem value="maybe">
                 <div className="flex items-center gap-2">
                   <HelpCircle className="h-4 w-4 text-yellow-500" />
@@ -671,16 +721,28 @@ export default function EventDetailPage() {
         </div>
 
         {/* Captain Actions */}
-        {isCaptain && !isEditing && (
-          <div className="flex gap-3">
+        {(isCaptain || isSystemAdmin) && !isEditing && (
+          <div className="flex gap-3 flex-wrap">
             <Button
               variant="outline"
               className="flex-1"
-              onClick={handleStartEdit}
+              onClick={() => setShowAvailabilityManager(true)}
             >
-              <Edit className="h-4 w-4 mr-2" />
-              Edit Event
+              <Users className="h-4 w-4 mr-2" />
+              Manage Availability
             </Button>
+            {isCaptain && (
+              <>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={handleStartEdit}
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Event
+                </Button>
+              </>
+            )}
             {(event as any).recurrence_series_id && (
               <>
                 <Button
@@ -724,7 +786,7 @@ export default function EventDetailPage() {
             <CardTitle className="text-sm">Attendance Summary</CardTitle>
           </CardHeader>
           <CardContent className="p-4 pt-2">
-            <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="grid grid-cols-3 gap-2 text-center">
               <div>
                 <div className="text-2xl font-bold text-green-600">{attendees.available.length}</div>
                 <div className="text-xs text-muted-foreground">Available</div>
@@ -732,10 +794,6 @@ export default function EventDetailPage() {
               <div>
                 <div className="text-2xl font-bold text-yellow-600">{attendees.maybe.length}</div>
                 <div className="text-xs text-muted-foreground">Maybe</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-orange-600">{attendees.late.length}</div>
-                <div className="text-xs text-muted-foreground">Late</div>
               </div>
               <div>
                 <div className="text-2xl font-bold text-red-600">{attendees.unavailable.length}</div>
@@ -782,26 +840,6 @@ export default function EventDetailPage() {
             <CardContent className="p-4 pt-2">
               <div className="space-y-2">
                 {attendees.maybe.map(({ rosterMember }) => (
-                  <div key={rosterMember.id} className="flex items-center justify-between text-sm">
-                    <span>{rosterMember.full_name}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {attendees.late.length > 0 && (
-          <Card>
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <LateClock className="h-4 w-4 text-orange-500" />
-                Running Late ({attendees.late.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-2">
-              <div className="space-y-2">
-                {attendees.late.map(({ rosterMember }) => (
                   <div key={rosterMember.id} className="flex items-center justify-between text-sm">
                     <span>{rosterMember.full_name}</span>
                   </div>
@@ -868,6 +906,160 @@ export default function EventDetailPage() {
           initialEditScope={initialEditScope}
         />
       )}
+
+      {/* Availability Management Dialog */}
+      <AlertDialog open={showAvailabilityManager} onOpenChange={setShowAvailabilityManager}>
+        <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Manage Availability</AlertDialogTitle>
+            <AlertDialogDescription>
+              Change availability status for team members. Drag players between sections or use the dropdowns.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Available Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Check className="h-4 w-4 text-green-500" />
+                Available ({attendees.available.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-green-200 rounded-lg p-3 bg-green-50/50">
+                {attendees.available.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm">{rosterMember.full_name}</span>
+                    <Select
+                      value="available"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.available.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No one available</p>
+                )}
+              </div>
+            </div>
+
+            {/* Maybe Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <HelpCircle className="h-4 w-4 text-yellow-500" />
+                Maybe ({attendees.maybe.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-yellow-200 rounded-lg p-3 bg-yellow-50/50">
+                {attendees.maybe.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm">{rosterMember.full_name}</span>
+                    <Select
+                      value="maybe"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.maybe.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No maybes</p>
+                )}
+              </div>
+            </div>
+
+            {/* Unavailable Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <X className="h-4 w-4 text-red-500" />
+                Unavailable ({attendees.unavailable.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-red-200 rounded-lg p-3 bg-red-50/50">
+                {attendees.unavailable.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm text-muted-foreground">{rosterMember.full_name}</span>
+                    <Select
+                      value="unavailable"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.unavailable.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">Everyone is available!</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteAlert} onOpenChange={setShowDeleteAlert}>

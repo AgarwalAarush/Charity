@@ -36,7 +36,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { getEventTypeLabel, getEventTypes } from '@/lib/event-type-colors'
+import { getEventTypeLabel, getEventTypes, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { getTeamColorClass } from '@/lib/team-colors'
 
 interface PlayerStats {
   matchesPlayed: number
@@ -85,7 +86,7 @@ export default function AvailabilityPage() {
   const [teamName, setTeamName] = useState<string>('')
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match']) // Default to matches only
   const [openPopovers, setOpenPopovers] = useState<Record<string, boolean>>({})
-  const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'late' | 'last_resort'>>>({})
+  const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'last_resort'>>>({})
   const [bulkAvailabilityDialog, setBulkAvailabilityDialog] = useState<{
     open: boolean
     type: 'row' | 'event' | null
@@ -188,7 +189,13 @@ export default function AvailabilityPage() {
     }
     if (events) {
       events.forEach(e => {
-        allItems.push({ ...e, type: 'event' as const })
+        allItems.push({ 
+          ...e, 
+          type: 'event' as const,
+          event_type: e.event_type || null,
+          event_name: e.event_name,
+          team_id: e.team_id
+        } as CalendarItem)
       })
     }
     
@@ -367,7 +374,7 @@ export default function AvailabilityPage() {
   function confirmBulkAvailability() {
     if (!bulkStatus || !bulkAvailabilityDialog.type) return
 
-    const changes: Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'late' | 'last_resort'>> = {}
+    const changes: Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'last_resort'>> = {}
     let overwriteCount = 0
 
     if (bulkAvailabilityDialog.type === 'row' && bulkAvailabilityDialog.playerId) {
@@ -445,8 +452,10 @@ export default function AvailabilityPage() {
       if (item.type === 'match') {
         return selectedEventTypes.includes('match')
       } else {
-        const eventType = (item as any).event_type || 'other'
-        return selectedEventTypes.includes(eventType) || selectedEventTypes.includes('all')
+        // For events, check the event_type field
+        const eventType = item.event_type || 'other'
+        // Return true if this event type is selected, or if 'all' is selected
+        return selectedEventTypes.includes(eventType)
       }
     })
   }
@@ -573,8 +582,6 @@ export default function AvailabilityPage() {
         return 'Unavailable'
       case 'maybe':
         return 'Maybe'
-      case 'late':
-        return 'Running Late'
       case 'last_resort':
         return 'Last Resort'
       default:
@@ -593,8 +600,6 @@ export default function AvailabilityPage() {
         return 'bg-red-100 hover:bg-red-200 text-red-700 border-red-300'
       case 'maybe':
         return 'bg-yellow-100 hover:bg-yellow-200 text-yellow-700 border-yellow-300'
-      case 'late':
-        return 'bg-orange-100 hover:bg-orange-200 text-orange-700 border-orange-300'
       case 'last_resort':
         return 'bg-purple-100 hover:bg-purple-200 text-purple-700 border-purple-300'
       default:
@@ -692,26 +697,47 @@ export default function AvailabilityPage() {
                   <th className="p-2 text-center text-sm font-medium border-r min-w-[120px] bg-gray-50">
                     HISTORY
                   </th>
-                  {getDisplayedItems().map((item, index) => (
-                    <th key={item.id} className="p-2 text-center text-sm font-medium border-r min-w-[140px] bg-gray-50">
-                      {item.type === 'match' ? (
-                        <>MATCH {index + 1} {(item as Match).is_home ? '(H)' : '(A)'}</>
-                      ) : (
-                        <>EVENT {index + 1}</>
-                      )}
-                      {isCaptain && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0 ml-1"
-                          onClick={() => handleBulkAvailability('event', undefined, item.id)}
-                          title="Mark all players"
-                        >
-                          <Users className="h-3 w-3" />
-                        </Button>
-                      )}
-                    </th>
-                  ))}
+                  {getDisplayedItems().map((item, index) => {
+                    const eventType = item.type === 'event' ? (item as any).event_type : null
+                    const isPractice = eventType === 'practice'
+                    const isWarmup = eventType === 'warmup'
+                    return (
+                      <th 
+                        key={item.id} 
+                        className={cn(
+                          "p-2 text-center text-sm font-medium border-r min-w-[140px] bg-gray-50 relative",
+                          getTeamColorClass(item.team_id, 'border'),
+                          "border-l-4"
+                        )}
+                      >
+                        <div className="flex items-center justify-center gap-1">
+                          {item.type === 'match' ? (
+                            <>MATCH {index + 1} {(item as Match).is_home ? '(H)' : '(A)'}</>
+                          ) : isPractice ? (
+                            <>PRACTICE {index + 1}</>
+                          ) : isWarmup ? (
+                            <>WARMUP {index + 1}</>
+                          ) : (
+                            <>EVENT {index + 1}</>
+                          )}
+                          {isCaptain && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 ml-1"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleBulkAvailability('event', undefined, item.id)
+                              }}
+                              title="Mark all players"
+                            >
+                              <Users className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </th>
+                    )
+                  })}
                 </tr>
                 {/* Second header row: Match details and availability counts */}
                 <tr className="border-b bg-gray-50">
@@ -749,7 +775,21 @@ export default function AvailabilityPage() {
                     const dateTimeText = `${itemDate} @${formattedTime}`
                     
                     return (
-                      <th key={item.id} className="p-2 border-r">
+                      <th 
+                        key={item.id} 
+                        className={cn(
+                          "p-2 border-r cursor-pointer hover:bg-gray-100 transition-colors",
+                          getTeamColorClass(item.team_id, 'border'),
+                          "border-l-4"
+                        )}
+                        onClick={() => {
+                          if (item.type === 'event') {
+                            router.push(`/teams/${item.team_id}/events/${item.id}`)
+                          } else {
+                            router.push(`/teams/${item.team_id}/matches/${item.id}`)
+                          }
+                        }}
+                      >
                         <div className="text-xs font-medium mb-1 text-left px-1">
                           {dateTimeText}
                         </div>
@@ -772,7 +812,21 @@ export default function AvailabilityPage() {
                       ? ((item as Match).opponent_name || 'TBD')
                       : ((item as any).event_name || 'Event')
                     return (
-                      <th key={item.id} className="p-2 border-r">
+                      <th 
+                        key={item.id} 
+                        className={cn(
+                          "p-2 border-r cursor-pointer hover:bg-gray-100 transition-colors",
+                          getTeamColorClass(item.team_id, 'border'),
+                          "border-l-4"
+                        )}
+                        onClick={() => {
+                          if (item.type === 'event') {
+                            router.push(`/teams/${item.team_id}/events/${item.id}`)
+                          } else {
+                            router.push(`/teams/${item.team_id}/matches/${item.id}`)
+                          }
+                        }}
+                      >
                         <div className="text-xs font-medium text-left px-1">
                           {displayName}
                         </div>
@@ -909,14 +963,6 @@ export default function AvailabilityPage() {
                                   >
                                     <HelpCircle className="h-4 w-4 mr-2 text-yellow-500" />
                                     Maybe
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    className="w-full justify-start rounded-none"
-                                    onClick={() => updateAvailabilityLocal(player.id, item.id, 'late')}
-                                  >
-                                    <Clock className="h-4 w-4 mr-2 text-orange-500" />
-                                    Running Late
                                   </Button>
                                   <Button
                                     variant="ghost"

@@ -21,6 +21,8 @@ import {
 import { Save, Loader2, Plus, Edit, Trash2, MapPin, ExternalLink, HelpCircle } from 'lucide-react'
 import { VenueDialog } from '@/components/teams/venue-dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { getAllTeamColors, getTeamColorName } from '@/lib/team-colors'
+import { cn } from '@/lib/utils'
 
 // League options mapping - same as in create-team-dialog
 const leagueOptions: Record<string, string[]> = {
@@ -95,6 +97,7 @@ export default function TeamSettingsPage() {
   const [totalLines, setTotalLines] = useState<number>(3)
   const [maxSetsPerLine, setMaxSetsPerLine] = useState<number>(3)
   const [lineMatchTypes, setLineMatchTypes] = useState<string[]>(['Doubles Match', 'Doubles Match', 'Doubles Match'])
+  const [teamColor, setTeamColor] = useState<string>('')
 
   useEffect(() => {
     loadTeam()
@@ -148,6 +151,9 @@ export default function TeamSettingsPage() {
       
       setTotalLines(data.total_lines || 3)
       setMaxSetsPerLine(data.max_sets_per_line || 3)
+      
+      // Load team color (if exists, otherwise use hash-based default)
+      setTeamColor((data as any).color || getTeamColorName(teamId))
       
       // Load line match types (convert from database format to display format)
       const matchTypeMap: Record<string, string> = {
@@ -291,6 +297,8 @@ export default function TeamSettingsPage() {
       total_lines: totalLines,
       max_sets_per_line: maxSetsPerLine,
       line_match_types: lineMatchTypesDb,
+      // Team color (requires database migration to add color column)
+      color: teamColor || null,
     }
 
     // Handle facility
@@ -442,6 +450,37 @@ export default function TeamSettingsPage() {
               <CardTitle className="text-sm">Enhanced Team Configuration</CardTitle>
             </CardHeader>
             <CardContent className="p-4 pt-2 space-y-4">
+              {/* Section 0: Team Color */}
+              <div className="space-y-4 border-b pb-4">
+                <h3 className="text-base font-semibold">Team Color</h3>
+                <div className="space-y-2">
+                  <Label>Calendar Display Color</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Choose a color to help identify this team in calendar views
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {getAllTeamColors().map((color) => (
+                      <button
+                        key={color.name}
+                        type="button"
+                        onClick={() => setTeamColor(color.name)}
+                        className={cn(
+                          "w-10 h-10 rounded-full border-2 transition-all",
+                          teamColor === color.name ? "border-foreground scale-110" : "border-muted hover:scale-105",
+                          color.bgClass
+                        )}
+                        title={color.name.charAt(0).toUpperCase() + color.name.slice(1)}
+                      />
+                    ))}
+                  </div>
+                  {teamColor && (
+                    <p className="text-xs text-muted-foreground">
+                      Selected: {teamColor.charAt(0).toUpperCase() + teamColor.slice(1)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {/* Section 1: General Details */}
               <div className="space-y-4 border-b pb-4">
                 <h3 className="text-base font-semibold">General Details</h3>
