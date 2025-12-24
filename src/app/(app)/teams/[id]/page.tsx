@@ -36,6 +36,7 @@ type Event = {
 }
 import { formatDate, formatTime, calculateEndTime, cn } from '@/lib/utils'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 import {
   Users,
   Calendar,
@@ -568,20 +569,10 @@ export default function TeamDetailPage() {
                           <span className="font-medium text-sm">
                             {event.event_name}
                           </span>
-                          {(() => {
-                            const eventType = (event as any).event_type
-                            if (eventType === 'practice') {
-                              return <Badge variant="default" className="text-xs bg-blue-500 text-white">Practice</Badge>
-                            } else if (eventType === 'warmup') {
-                              return <Badge variant="default" className="text-xs bg-orange-500 text-white">Warmup</Badge>
-                            } else if (eventType === 'social') {
-                              return <Badge variant="default" className="text-xs bg-pink-500 text-white">Social</Badge>
-                            } else if (eventType === 'other') {
-                              return <Badge variant="default" className="text-xs bg-purple-500 text-white">Other</Badge>
-                            } else {
-                              return <Badge variant="default" className="text-xs bg-green-500 text-white">Match</Badge>
-                            }
-                          })()}
+                          <EventTypeBadge 
+                            eventType={(event as any).event_type} 
+                            className="text-xs"
+                          />
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {formatDate(event.date, 'EEE, MMM d')} {formatTime(event.time).toLowerCase()}

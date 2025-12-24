@@ -49,6 +49,7 @@ type Availability = {
 import { formatDate, formatTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 import { EditEventDialog } from '@/components/teams/edit-event-dialog'
 import { useIsSystemAdmin } from '@/hooks/use-is-system-admin'
 import {
@@ -73,7 +74,8 @@ import {
   XCircle,
   Loader2,
   Plus,
-  Timer
+  Timer,
+  ArrowLeft
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -497,6 +499,32 @@ export default function EventDetailPage() {
       <Header title="Event Details" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+          {isEditing && (
+            <Button
+              onClick={handleSaveChanges}
+              disabled={saving || !editedEvent.event_name || !editedEvent.date || !editedEvent.time}
+              size="sm"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+          )}
+        </div>
         {/* Event Info */}
         <Card>
           <CardContent className="p-4 space-y-3">
@@ -519,12 +547,7 @@ export default function EventDetailPage() {
                 )}
               </div>
               {!isEditing && (
-                <Badge 
-                  variant="secondary" 
-                  className={(event as any).event_type ? getEventTypeBadgeClass((event as any).event_type) : ''}
-                >
-                  {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
-                </Badge>
+                <EventTypeBadge eventType={(event as any).event_type} />
               )}
               {isEditing && (
                 <Select

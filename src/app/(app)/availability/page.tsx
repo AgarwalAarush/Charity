@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,7 +19,7 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Check, X, HelpCircle, Clock, Save, Users, ChevronRight } from 'lucide-react'
+import { Loader2, Check, X, HelpCircle, Clock, Save, Users, ChevronRight, ArrowLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Event, Match, Team } from '@/types/database.types'
 import Link from 'next/link'
@@ -39,6 +40,7 @@ interface EventItem {
 }
 
 export default function BulkAvailabilityPage() {
+  const router = useRouter()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -57,166 +59,198 @@ export default function BulkAvailabilityPage() {
   }, [])
 
   async function loadData() {
-    setLoading(true)
-    const supabase = createClient()
+    try {
+      setLoading(true)
+      const supabase = createClient()
 
-    // Get current user
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      setLoading(false)
-      return
-    }
-
-    // Get user's teams
-    const { data: rosterMembers } = await supabase
-      .from('roster_members')
-      .select(`
-        id,
-        team_id,
-        teams (
-          id,
-          name
-        )
-      `)
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-
-    const userTeams = rosterMembers?.map(rm => (rm.teams as Team)).filter(Boolean) || []
-    setTeams(userTeams)
-
-    // Get teams where user is captain or co-captain
-    const { data: captainTeamsData } = await supabase
-      .from('teams')
-      .select('id, name')
-      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
-
-    const captainTeamsList = captainTeamsData || []
-    setCaptainTeams(captainTeamsList)
-
-    if (userTeams.length === 0) {
-      setLoading(false)
-      return
-    }
-
-    const teamIds = userTeams.map(t => t.id)
-    const rosterMemberIds = rosterMembers?.map(rm => rm.id).filter(Boolean) || []
-    
-    console.log('Loading availability for roster members:', rosterMemberIds)
-
-    // Get all upcoming events
-    const today = new Date().toISOString().split('T')[0]
-    const { data: eventsData } = await supabase
-      .from('events')
-      .select(`
-        id,
-        event_name,
-        date,
-        time,
-        location,
-        event_type,
-        team_id,
-        teams (
-          id,
-          name
-        )
-      `)
-      .in('team_id', teamIds)
-      .gte('date', today)
-      .order('date', { ascending: true })
-      .order('time', { ascending: true })
-
-    // Get all upcoming matches
-    const { data: matchesData } = await supabase
-      .from('matches')
-      .select(`
-        id,
-        opponent_name,
-        date,
-        time,
-        venue,
-        team_id,
-        teams (
-          id,
-          name
-        )
-      `)
-      .in('team_id', teamIds)
-      .gte('date', today)
-      .order('date', { ascending: true })
-      .order('time', { ascending: true })
-
-    // Get existing availability
-    const availMap: Record<string, AvailabilityStatus> = {}
-    
-    if (rosterMemberIds.length > 0) {
-      const { data: availabilityData, error: availabilityError } = await supabase
-        .from('availability')
-        .select('*')
-        .in('roster_member_id', rosterMemberIds)
-
-      if (availabilityError) {
-        console.error('Error loading availability:', availabilityError)
-      } else {
-        console.log('Loaded availability records:', availabilityData?.length || 0)
-        
-        // Build availability map
-        availabilityData?.forEach(avail => {
-          const itemId = avail.event_id || avail.match_id
-          if (itemId) {
-            availMap[itemId] = (avail.status as AvailabilityStatus) || 'unavailable'
-          }
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      
+      if (userError) {
+        console.error('Error getting user:', userError)
+        toast({
+          title: 'Authentication Error',
+          description: 'Unable to verify your session. Please try logging in again.',
+          variant: 'destructive',
         })
-        console.log('Availability map:', availMap)
+        setLoading(false)
+        return
       }
-    } else {
-      console.warn('No roster member IDs found, cannot load availability')
+      
+      if (!user) {
+        setLoading(false)
+        return
+      }
+
+      // Get user's teams
+      const { data: rosterMembers } = await supabase
+        .from('roster_members')
+        .select(`
+          id,
+          team_id,
+          teams (
+            id,
+            name
+          )
+        `)
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+
+      const userTeams = rosterMembers?.map(rm => (rm.teams as Team)).filter(Boolean) || []
+      setTeams(userTeams)
+
+      // Get teams where user is captain or co-captain
+      const { data: captainTeamsData } = await supabase
+        .from('teams')
+        .select('id, name')
+        .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+
+      const captainTeamsList = captainTeamsData || []
+      setCaptainTeams(captainTeamsList)
+
+      if (userTeams.length === 0) {
+        setLoading(false)
+        return
+      }
+
+      const teamIds = userTeams.map(t => t.id)
+      const rosterMemberIds = rosterMembers?.map(rm => rm.id).filter(Boolean) || []
+      
+      console.log('Loading availability for roster members:', rosterMemberIds)
+
+      // Get all upcoming events
+      const today = new Date().toISOString().split('T')[0]
+      const { data: eventsData } = await supabase
+        .from('events')
+        .select(`
+          id,
+          event_name,
+          date,
+          time,
+          location,
+          event_type,
+          team_id,
+          teams (
+            id,
+            name
+          )
+        `)
+        .in('team_id', teamIds)
+        .gte('date', today)
+        .order('date', { ascending: true })
+        .order('time', { ascending: true })
+
+      // Get all upcoming matches
+      const { data: matchesData } = await supabase
+        .from('matches')
+        .select(`
+          id,
+          opponent_name,
+          date,
+          time,
+          venue,
+          team_id,
+          teams (
+            id,
+            name
+          )
+        `)
+        .in('team_id', teamIds)
+        .gte('date', today)
+        .order('date', { ascending: true })
+        .order('time', { ascending: true })
+
+      // Get existing availability
+      const availMap: Record<string, AvailabilityStatus> = {}
+      
+      if (rosterMemberIds.length > 0) {
+        const { data: availabilityData, error: availabilityError } = await supabase
+          .from('availability')
+          .select('*')
+          .in('roster_member_id', rosterMemberIds)
+
+        if (availabilityError) {
+          console.error('Error loading availability:', availabilityError)
+        } else {
+          console.log('Loaded availability records:', availabilityData?.length || 0)
+          
+          // Build availability map
+          availabilityData?.forEach(avail => {
+            const itemId = avail.event_id || avail.match_id
+            if (itemId) {
+              availMap[itemId] = (avail.status as AvailabilityStatus) || 'unavailable'
+            }
+          })
+          console.log('Availability map:', availMap)
+        }
+      } else {
+        console.warn('No roster member IDs found, cannot load availability')
+      }
+      
+      setAvailabilityMap(availMap)
+
+      // Combine events and matches
+      const allItems: EventItem[] = []
+
+      eventsData?.forEach(event => {
+        const team = event.teams as Team
+        allItems.push({
+          id: event.id,
+          type: 'event',
+          name: event.event_name,
+          date: event.date,
+          time: event.time,
+          teamId: event.team_id,
+          teamName: team.name,
+          eventType: event.event_type,
+          location: event.location || null,
+          currentStatus: availMap[event.id],
+        })
+      })
+
+      matchesData?.forEach(match => {
+        const team = match.teams as Team
+        allItems.push({
+          id: match.id,
+          type: 'match',
+          name: `vs ${match.opponent_name}`,
+          date: match.date,
+          time: match.time,
+          teamId: match.team_id,
+          teamName: team.name,
+          location: match.venue || null,
+          currentStatus: availMap[match.id],
+        })
+      })
+
+      // Sort by date and time
+      allItems.sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date)
+        if (dateCompare !== 0) return dateCompare
+        return a.time.localeCompare(b.time)
+      })
+
+      setEvents(allItems)
+    } catch (error) {
+      console.error('Error loading availability data:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        toast({
+          title: 'Connection Error',
+          description: 'Unable to connect to the server. Please check your internet connection and try again.',
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Error Loading Availability',
+          description: errorMessage,
+          variant: 'destructive',
+        })
+      }
+    } finally {
+      setLoading(false)
     }
-    
-    setAvailabilityMap(availMap)
-
-    // Combine events and matches
-    const allItems: EventItem[] = []
-
-    eventsData?.forEach(event => {
-      const team = event.teams as Team
-      allItems.push({
-        id: event.id,
-        type: 'event',
-        name: event.event_name,
-        date: event.date,
-        time: event.time,
-        teamId: event.team_id,
-        teamName: team.name,
-        eventType: event.event_type,
-        location: event.location || null,
-        currentStatus: availMap[event.id],
-      })
-    })
-
-    matchesData?.forEach(match => {
-      const team = match.teams as Team
-      allItems.push({
-        id: match.id,
-        type: 'match',
-        name: `vs ${match.opponent_name}`,
-        date: match.date,
-        time: match.time,
-        teamId: match.team_id,
-        teamName: team.name,
-        location: match.venue || null,
-        currentStatus: availMap[match.id],
-      })
-    })
-
-    // Sort by date and time
-    allItems.sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date)
-      if (dateCompare !== 0) return dateCompare
-      return a.time.localeCompare(b.time)
-    })
-
-    setEvents(allItems)
-    setLoading(false)
   }
 
   const filteredEvents = useMemo(() => {
@@ -598,6 +632,14 @@ export default function BulkAvailabilityPage() {
       <Header title="Availability" />
 
       <main className="flex-1 p-4 space-y-4 pb-20">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         {/* Captain Team Availability Grids */}
         {captainTeams.length > 0 && (
           <Card>

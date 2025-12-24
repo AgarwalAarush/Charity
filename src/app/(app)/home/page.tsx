@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getEventTypes, getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 
 interface UpcomingMatch {
@@ -886,14 +887,7 @@ export default function HomePage() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                {event.event_type && (
-                                  <Badge 
-                                    variant="secondary" 
-                                    className={getEventTypeBadgeClass(event.event_type as any)}
-                                  >
-                                    {getEventTypeLabel(event.event_type as any)}
-                                  </Badge>
-                                )}
+                                <EventTypeBadge eventType={event.event_type as any} />
                                 <span className="font-medium truncate">
                                   {event.event_name}
                                 </span>

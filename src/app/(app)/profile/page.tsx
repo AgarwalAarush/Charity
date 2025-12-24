@@ -22,7 +22,8 @@ import {
   Plus,
   Loader2,
   ChevronRight,
-  Clock
+  Clock,
+  ArrowLeft
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -198,6 +199,14 @@ export default function ProfilePage() {
       <Header title="Profile" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         {/* Profile Header */}
         <Card>
           <CardContent className="p-4">

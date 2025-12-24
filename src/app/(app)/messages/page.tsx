@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { createClient } from '@/lib/supabase/client'
 import { Team, Profile } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
-import { Users, MessageCircle, ChevronRight, Mail, Check, X } from 'lucide-react'
+import { Users, MessageCircle, ChevronRight, Mail, Check, X, ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 
@@ -62,150 +62,220 @@ export default function MessagesPage() {
   }, [])
 
   async function loadConversations() {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    try {
+      setLoading(true)
+      const supabase = createClient()
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
 
-    if (!user) {
-      router.push('/auth/login')
-      return
-    }
-
-    // Load pending team invitations
-    const { data: invites } = await supabase
-      .from('team_invitations')
-      .select('*, teams(*), inviter:profiles!team_invitations_inviter_id_fkey(*)')
-      .eq('invitee_id', user.id)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-
-    if (invites) {
-      const invitationsWithData = invites.map(invite => ({
-        ...invite,
-        team: invite.teams,
-        inviter: invite.inviter,
-      }))
-      setInvitations(invitationsWithData as any)
-    }
-
-    // Get teams the user belongs to
-    const { data: captainTeams } = await supabase
-      .from('teams')
-      .select('*')
-      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
-
-    const { data: memberTeams } = await supabase
-      .from('roster_members')
-      .select('teams(*)')
-      .eq('user_id', user.id)
-
-    const allTeams = [
-      ...(captainTeams || []),
-      ...(memberTeams?.map(m => m.teams).filter(Boolean) as Team[] || [])
-    ]
-
-    // Remove duplicates
-    const uniqueTeams = allTeams.filter((team, index, self) =>
-      index === self.findIndex(t => t.id === team.id)
-    )
-
-    // Get or create team conversations
-    const teamConvs: TeamConversation[] = []
-    for (const team of uniqueTeams) {
-      // Check if conversation exists
-      const { data: existingConv } = await supabase
-        .from('conversations')
-        .select('*')
-        .eq('kind', 'team')
-        .eq('team_id', team.id)
-        .maybeSingle()
-
-      let conversation = existingConv
-
-      // Create if doesn't exist
-      if (!conversation) {
-        const { data: newConv } = await supabase
-          .from('conversations')
-          .insert({
-            kind: 'team',
-            team_id: team.id,
-          })
-          .select()
-          .single()
-
-        conversation = newConv
-      }
-
-      if (conversation) {
-        // Check for unread
-        const { data: readStatus } = await supabase
-          .from('conversation_reads')
-          .select('last_read_at')
-          .eq('conversation_id', conversation.id)
-          .eq('user_id', user.id)
-          .maybeSingle()
-
-        const hasUnread = conversation.last_message_at && (
-          !readStatus || 
-          new Date(conversation.last_message_at) > new Date(readStatus.last_read_at)
-        )
-
-        teamConvs.push({
-          ...conversation,
-          team,
-          has_unread: hasUnread,
+      if (userError) {
+        console.error('Error getting user:', userError)
+        toast({
+          title: 'Authentication Error',
+          description: 'Unable to verify your session. Please try logging in again.',
+          variant: 'destructive',
         })
+        setLoading(false)
+        return
       }
-    }
 
-    setTeamConversations(teamConvs.sort((a, b) => {
-      if (!a.last_message_at) return 1
-      if (!b.last_message_at) return -1
-      return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
-    }))
+      if (!user) {
+        router.push('/auth/login')
+        setLoading(false)
+        return
+      }
 
-    // Get DM conversations
-    const { data: dmConvs } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('kind', 'dm')
-      .or(`dm_user1.eq.${user.id},dm_user2.eq.${user.id}`)
-      .order('last_message_at', { ascending: false, nullsFirst: false })
+      // Load pending team invitations
+      const { data: invites, error: invitesError } = await supabase
+        .from('team_invitations')
+        .select('*, teams(*), inviter:profiles!team_invitations_inviter_id_fkey(*)')
+        .eq('invitee_id', user.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
 
-    // Resolve other user profiles
-    const dmConvsWithProfiles: DMConversation[] = []
-    for (const conv of dmConvs || []) {
-      const otherUserId = conv.dm_user1 === user.id ? conv.dm_user2 : conv.dm_user1
+      if (invitesError) {
+        console.error('Error loading invitations:', invitesError)
+        // Continue with other data even if invitations fail
+      }
 
-      const { data: otherUser } = await supabase
-        .from('profiles')
+      if (invites) {
+        const invitationsWithData = invites.map(invite => ({
+          ...invite,
+          team: invite.teams,
+          inviter: invite.inviter,
+        }))
+        setInvitations(invitationsWithData as any)
+      }
+
+      // Get teams the user belongs to
+      const { data: captainTeams, error: captainError } = await supabase
+        .from('teams')
         .select('*')
-        .eq('id', otherUserId)
-        .maybeSingle()
+        .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
 
-      // Check for unread
-      const { data: readStatus } = await supabase
-        .from('conversation_reads')
-        .select('last_read_at')
-        .eq('conversation_id', conv.id)
+      if (captainError) {
+        console.error('Error loading captain teams:', captainError)
+      }
+
+      const { data: memberTeams, error: memberError } = await supabase
+        .from('roster_members')
+        .select('teams(*)')
         .eq('user_id', user.id)
-        .maybeSingle()
 
-      const hasUnread = conv.last_message_at && (
-        !readStatus || 
-        new Date(conv.last_message_at) > new Date(readStatus.last_read_at)
+      if (memberError) {
+        console.error('Error loading member teams:', memberError)
+      }
+
+      const allTeams = [
+        ...(captainTeams || []),
+        ...(memberTeams?.map(m => m.teams).filter(Boolean) as Team[] || [])
+      ]
+
+      // Remove duplicates
+      const uniqueTeams = allTeams.filter((team, index, self) =>
+        index === self.findIndex(t => t.id === team.id)
       )
 
-      if (otherUser) {
-        dmConvsWithProfiles.push({
-          ...conv,
-          other_user: otherUser,
-          has_unread: hasUnread,
+      // Get or create team conversations
+      const teamConvs: TeamConversation[] = []
+      for (const team of uniqueTeams) {
+        try {
+          // Check if conversation exists
+          const { data: existingConv, error: existingError } = await supabase
+            .from('conversations')
+            .select('*')
+            .eq('kind', 'team')
+            .eq('team_id', team.id)
+            .maybeSingle()
+
+          if (existingError) {
+            console.error(`Error checking conversation for team ${team.id}:`, existingError)
+            continue
+          }
+
+          let conversation = existingConv
+
+          // Create if doesn't exist
+          if (!conversation) {
+            const { data: newConv, error: createError } = await supabase
+              .from('conversations')
+              .insert({
+                kind: 'team',
+                team_id: team.id,
+              })
+              .select()
+              .single()
+
+            if (createError) {
+              console.error(`Error creating conversation for team ${team.id}:`, createError)
+              continue
+            }
+
+            conversation = newConv
+          }
+
+          if (conversation) {
+            // Check for unread
+            const { data: readStatus } = await supabase
+              .from('conversation_reads')
+              .select('last_read_at')
+              .eq('conversation_id', conversation.id)
+              .eq('user_id', user.id)
+              .maybeSingle()
+
+            const hasUnread = conversation.last_message_at && (
+              !readStatus || 
+              new Date(conversation.last_message_at) > new Date(readStatus.last_read_at)
+            )
+
+            teamConvs.push({
+              ...conversation,
+              team,
+              has_unread: hasUnread,
+            })
+          }
+        } catch (err) {
+          console.error(`Error processing team ${team.id}:`, err)
+          // Continue with next team
+        }
+      }
+
+      setTeamConversations(teamConvs.sort((a, b) => {
+        if (!a.last_message_at) return 1
+        if (!b.last_message_at) return -1
+        return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
+      }))
+
+      // Get DM conversations
+      const { data: dmConvs, error: dmError } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('kind', 'dm')
+        .or(`dm_user1.eq.${user.id},dm_user2.eq.${user.id}`)
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+
+      if (dmError) {
+        console.error('Error loading DM conversations:', dmError)
+      }
+
+      // Resolve other user profiles
+      const dmConvsWithProfiles: DMConversation[] = []
+      for (const conv of dmConvs || []) {
+        try {
+          const otherUserId = conv.dm_user1 === user.id ? conv.dm_user2 : conv.dm_user1
+
+          const { data: otherUser } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', otherUserId)
+            .maybeSingle()
+
+          // Check for unread
+          const { data: readStatus } = await supabase
+            .from('conversation_reads')
+            .select('last_read_at')
+            .eq('conversation_id', conv.id)
+            .eq('user_id', user.id)
+            .maybeSingle()
+
+          const hasUnread = conv.last_message_at && (
+            !readStatus || 
+            new Date(conv.last_message_at) > new Date(readStatus.last_read_at)
+          )
+
+          if (otherUser) {
+            dmConvsWithProfiles.push({
+              ...conv,
+              other_user: otherUser,
+              has_unread: hasUnread,
+            })
+          }
+        } catch (err) {
+          console.error(`Error processing DM conversation ${conv.id}:`, err)
+          // Continue with next conversation
+        }
+      }
+
+      setDMConversations(dmConvsWithProfiles)
+    } catch (error) {
+      console.error('Error loading conversations:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        toast({
+          title: 'Connection Error',
+          description: 'Unable to connect to the server. Please check your internet connection and try again.',
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Error Loading Messages',
+          description: errorMessage,
+          variant: 'destructive',
         })
       }
+    } finally {
+      setLoading(false)
     }
-
-    setDMConversations(dmConvsWithProfiles)
-    setLoading(false)
   }
 
   const getInitials = (name: string) => {
@@ -262,6 +332,14 @@ export default function MessagesPage() {
       <Header title="Messages" />
 
       <main className="flex-1 p-4 space-y-6">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         {/* Team Invitations */}
         {invitations.length > 0 && (
           <div className="space-y-2">

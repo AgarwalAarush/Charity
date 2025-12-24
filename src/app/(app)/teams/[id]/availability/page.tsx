@@ -12,7 +12,7 @@ import { RosterMember, Match, Availability } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
-import { Check, X, HelpCircle, Clock, Info, ChevronDown, ArrowLeft, Save, Filter, Users } from 'lucide-react'
+import { Check, X, HelpCircle, Clock, ChevronDown, ArrowLeft, Save, Filter, Users, Trash2, X as XIcon } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -37,7 +37,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { getEventTypeLabel, getEventTypes, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 import { getTeamColorClass } from '@/lib/team-colors'
+import { useIsSystemAdmin } from '@/hooks/use-is-system-admin'
 
 interface PlayerStats {
   matchesPlayed: number
@@ -96,6 +98,15 @@ export default function AvailabilityPage() {
   }>({ open: false, type: null })
   const [bulkStatus, setBulkStatus] = useState<'available' | 'unavailable' | null>(null)
   const { toast } = useToast()
+  const { isAdmin: isSystemAdmin } = useIsSystemAdmin()
+  const [availableTeams, setAvailableTeams] = useState<Array<{ id: string; name: string }>>([])
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(teamId)
+  const [clearAvailabilityDialog, setClearAvailabilityDialog] = useState<{
+    open: boolean
+    type: 'cell' | 'column' | 'row' | 'grid' | null
+    playerId?: string
+    itemId?: string
+  }>({ open: false, type: null })
 
   const getInitials = (name: string) => {
     return name
@@ -106,11 +117,36 @@ export default function AvailabilityPage() {
       .slice(0, 2)
   }
 
-  useEffect(() => {
-    loadAvailabilityData()
-  }, [teamId])
+  async function loadAvailableTeams() {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return
 
-  async function loadAvailabilityData() {
+    // Get teams where user is captain or co-captain
+    const { data: captainTeams } = await supabase
+      .from('teams')
+      .select('id, name')
+      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+      .order('name')
+
+    if (captainTeams) {
+      setAvailableTeams(captainTeams)
+    }
+  }
+
+  useEffect(() => {
+    loadAvailableTeams()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (selectedTeamId) {
+      loadAvailabilityData(selectedTeamId)
+    }
+  }, [selectedTeamId])
+
+  async function loadAvailabilityData(targetTeamId: string) {
     const supabase = createClient()
     setLoading(true)
 
@@ -121,7 +157,7 @@ export default function AvailabilityPage() {
     const { data: teamData } = await supabase
       .from('teams')
       .select('name, captain_id, co_captain_id, total_lines, line_match_types, color')
-      .eq('id', teamId)
+      .eq('id', targetTeamId)
       .single()
     
     if (teamData?.name) {
@@ -153,7 +189,7 @@ export default function AvailabilityPage() {
     const { data: players } = await supabase
       .from('roster_members')
       .select('*')
-      .eq('team_id', teamId)
+      .eq('team_id', targetTeamId)
       .eq('is_active', true)
       .order('full_name')
 
@@ -167,7 +203,7 @@ export default function AvailabilityPage() {
     const { data: matches } = await supabase
       .from('matches')
       .select('*')
-      .eq('team_id', teamId)
+      .eq('team_id', targetTeamId)
       .gte('date', today)
       .order('date')
       .limit(20)
@@ -175,7 +211,7 @@ export default function AvailabilityPage() {
     const { data: events } = await supabase
       .from('events')
       .select('*')
-      .eq('team_id', teamId)
+      .eq('team_id', targetTeamId)
       .gte('date', today)
       .order('date')
       .limit(20)
@@ -551,7 +587,7 @@ export default function AvailabilityPage() {
         })
         // Clear pending changes and reload data
         setPendingChanges({})
-        await loadAvailabilityData()
+        await loadAvailabilityData(selectedTeamId)
         setSaving(false)
       }
     } catch (err) {
@@ -563,6 +599,183 @@ export default function AvailabilityPage() {
       })
       setSaving(false)
     }
+  }
+
+  // Clear availability functions (sysadmin only)
+  async function clearAvailabilityCell(playerId: string, itemId: string) {
+    if (!isSystemAdmin) return
+
+    const supabase = createClient()
+    const item = data.items.find(i => i.id === itemId)
+    const isMatch = item?.type === 'match'
+
+    try {
+      const query = supabase
+        .from('availability')
+        .delete()
+        .eq('roster_member_id', playerId)
+      
+      if (isMatch) {
+        query.eq('match_id', itemId)
+      } else {
+        query.eq('event_id', itemId)
+      }
+
+      const { error } = await query
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: `Failed to clear availability: ${error.message}`,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Cleared',
+          description: 'Availability cleared successfully',
+        })
+        await loadAvailabilityData(selectedTeamId)
+      }
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: `Failed to clear availability: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  async function clearAvailabilityColumn(itemId: string) {
+    if (!isSystemAdmin) return
+
+    const supabase = createClient()
+    const item = data.items.find(i => i.id === itemId)
+    const isMatch = item?.type === 'match'
+
+    try {
+      const query = supabase
+        .from('availability')
+        .delete()
+      
+      if (isMatch) {
+        query.eq('match_id', itemId)
+      } else {
+        query.eq('event_id', itemId)
+      }
+
+      const { error } = await query
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: `Failed to clear column: ${error.message}`,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Cleared',
+          description: 'Column cleared successfully',
+        })
+        await loadAvailabilityData(selectedTeamId)
+      }
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: `Failed to clear column: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  async function clearAvailabilityRow(playerId: string) {
+    if (!isSystemAdmin) return
+
+    const supabase = createClient()
+
+    try {
+      const { error } = await supabase
+        .from('availability')
+        .delete()
+        .eq('roster_member_id', playerId)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: `Failed to clear row: ${error.message}`,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Cleared',
+          description: 'Row cleared successfully',
+        })
+        await loadAvailabilityData(selectedTeamId)
+      }
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: `Failed to clear row: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  async function clearEntireGrid() {
+    if (!isSystemAdmin) return
+
+    const supabase = createClient()
+    const playerIds = data.players.map(p => p.id)
+    const matchIds = data.items.filter(i => i.type === 'match').map(i => i.id)
+    const eventIds = data.items.filter(i => i.type === 'event').map(i => i.id)
+
+    try {
+      // Delete all availability for this team's players and items
+      const { error } = await supabase
+        .from('availability')
+        .delete()
+        .in('roster_member_id', playerIds)
+        .or(`match_id.in.(${matchIds.join(',')}),event_id.in.(${eventIds.join(',')})`)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: `Failed to clear grid: ${error.message}`,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Cleared',
+          description: 'Entire grid cleared successfully',
+        })
+        await loadAvailabilityData(selectedTeamId)
+      }
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: `Failed to clear grid: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  function handleClearAvailability(type: 'cell' | 'column' | 'row' | 'grid', playerId?: string, itemId?: string) {
+    setClearAvailabilityDialog({ open: true, type, playerId, itemId })
+  }
+
+  async function confirmClearAvailability() {
+    const { type, playerId, itemId } = clearAvailabilityDialog
+
+    if (type === 'cell' && playerId && itemId) {
+      await clearAvailabilityCell(playerId, itemId)
+    } else if (type === 'column' && itemId) {
+      await clearAvailabilityColumn(itemId)
+    } else if (type === 'row' && playerId) {
+      await clearAvailabilityRow(playerId)
+    } else if (type === 'grid') {
+      await clearEntireGrid()
+    }
+
+    setClearAvailabilityDialog({ open: false, type: null })
   }
 
   const getStatusIcon = (status?: string) => {
@@ -627,23 +840,67 @@ export default function AvailabilityPage() {
     <div className="flex flex-col min-h-screen">
       <Header title={teamName ? `Availability - ${teamName}` : "Availability"} />
 
-      <main className="flex-1 p-4 pt-2">
-        <div className="flex items-center justify-between mb-2">
+      <main className="flex-1 p-4 pt-2 overflow-x-hidden">
+        <div className="flex items-center justify-between mb-2 gap-2">
           <Button variant="ghost" onClick={() => router.back()} size="sm">
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back
           </Button>
-          
-          {isCaptain && Object.keys(pendingChanges).length > 0 && (
-            <Button 
-              onClick={saveAllChanges} 
-              disabled={saving}
-              className="ml-auto"
+
+          {/* Team Selector for Captains */}
+          {isCaptain && availableTeams.length > 1 && (
+            <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Select team" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableTeams.map(team => (
+                  <SelectItem key={team.id} value={team.id}>
+                    {team.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Sysadmin Clear Grid Button */}
+          {isSystemAdmin && (
+            <Button
+              variant="ghost"
+              onClick={() => handleClearAvailability('grid')}
               size="sm"
+              className="text-muted-foreground hover:text-destructive"
+              title="Clear all availability (Admin)"
             >
-              <Save className="mr-2 h-4 w-4" />
-              {saving ? 'Saving...' : `Save ${Object.values(pendingChanges).reduce((sum, changes) => sum + Object.keys(changes).length, 0)} Change(s)`}
+              <Trash2 className="h-4 w-4" />
             </Button>
+          )}
+          
+          {/* Save and Cancel buttons for Captains */}
+          {isCaptain && (
+            <div className="flex gap-2 ml-auto">
+              {Object.keys(pendingChanges).length > 0 && (
+                <Button 
+                  variant="outline"
+                  onClick={() => setPendingChanges({})}
+                  disabled={saving}
+                  size="sm"
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  Cancel
+                </Button>
+              )}
+              <Button 
+                onClick={saveAllChanges} 
+                disabled={saving || Object.keys(pendingChanges).length === 0}
+                size="sm"
+              >
+                <Save className="mr-2 h-4 w-4" />
+                {saving ? 'Saving...' : Object.keys(pendingChanges).length > 0 
+                  ? `Save ${Object.values(pendingChanges).reduce((sum, changes) => sum + Object.keys(changes).length, 0)} Change(s)`
+                  : 'Save'}
+              </Button>
+            </div>
           )}
         </div>
 
@@ -653,6 +910,22 @@ export default function AvailabilityPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <Label className="text-sm font-medium">Show:</Label>
               <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant={selectedEventTypes.length === ['match', ...getEventTypes().map(e => e.value)].length ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    const allTypes = ['match', ...getEventTypes().map(e => e.value)]
+                    if (selectedEventTypes.length === allTypes.length) {
+                      // If all selected, deselect all
+                      setSelectedEventTypes([])
+                    } else {
+                      // Select all
+                      setSelectedEventTypes(allTypes)
+                    }
+                  }}
+                >
+                  All
+                </Button>
                 <Button
                   variant={selectedEventTypes.includes('match') ? 'default' : 'outline'}
                   size="sm"
@@ -694,15 +967,15 @@ export default function AvailabilityPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
+          <div className="overflow-x-auto w-full -mx-4 px-4" style={{ maxWidth: 'calc(100vw - 2rem)' }}>
+            <table className="w-full border-collapse min-w-[800px]">
               <thead>
                 {/* First header row: Column names */}
                 <tr className="border-b">
                   <th className="sticky left-0 bg-background p-2 text-left text-sm font-medium border-r min-w-[150px] z-10">
                     PLAYER
                   </th>
-                  <th className="p-2 text-center text-sm font-medium border-r min-w-[120px] bg-gray-50">
+                  <th className="p-2 text-center text-sm font-medium border-r min-w-[120px] bg-background">
                     HISTORY
                   </th>
                   {getDisplayedItems().map((item, index) => {
@@ -748,57 +1021,15 @@ export default function AvailabilityPage() {
                         }}
                       >
                         <div className="flex items-center justify-center gap-1">
-                          {/* Don't render any badge for practice events - check this FIRST */}
-                          {(() => {
-                            // Debug: log practice detection
-                            if (isEvent && ((item as any).event_type === 'practice' || eventType === 'practice' || isPractice)) {
-                              console.log('Practice event detected - no badge:', { 
-                                event_type: (item as any).event_type, 
-                                eventType, 
-                                isPractice,
-                                item: item 
-                              })
-                            }
-                            return null
-                          })()}
-                          {isPractice || eventType === 'practice' || (item as any).event_type === 'practice' || (isEvent && eventType && getEventTypeLabel(eventType as any) === 'Practice') ? (
-                            null
-                          ) : isMatch ? (
-                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-green-500 text-white">
-                              Match {index + 1} 
-                              {(item as Match).is_home ? (
-                                <span className="ml-1 bg-teal-500 text-white px-1 rounded">(H)</span>
-                              ) : (
-                                <span className="ml-1 bg-orange-500 text-white px-1 rounded">(A)</span>
-                              )}
-                            </Badge>
-                          ) : isWarmup ? (
-                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-orange-500">
-                              Warmup
-                            </Badge>
-                          ) : isSocial ? (
-                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-pink-500">
-                              Social
-                            </Badge>
-                          ) : eventType === 'other' ? (
-                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-purple-500">
-                              Other
-                            </Badge>
-                          ) : eventType && eventType !== 'practice' && getEventTypeLabel(eventType as any) !== 'Practice' ? (
-                            <Badge variant="default" className={cn("text-[10px] px-1 py-0 h-4", 
-                              eventType === 'warmup' ? 'bg-orange-500' :
-                              eventType === 'social' ? 'bg-pink-500' :
-                              'bg-purple-500'
-                            )}>
+                          {isMatch ? (
+                            <span className="text-xs font-medium text-foreground">
+                              Match {index + 1} {(item as Match).is_home ? '(H)' : '(A)'}
+                            </span>
+                          ) : eventType ? (
+                            <span className="text-xs font-medium text-foreground">
                               {getEventTypeLabel(eventType as any)}
-                            </Badge>
-                          ) : eventType === 'practice' || getEventTypeLabel(eventType as any) === 'Practice' ? (
-                            null
-                          ) : (
-                            <Badge variant="default" className="text-[10px] px-1 py-0 h-4 bg-purple-500">
-                              Event
-                            </Badge>
-                          )}
+                            </span>
+                          ) : null}
                           {isCaptain && (
                             <Button
                               variant="ghost"
@@ -811,6 +1042,20 @@ export default function AvailabilityPage() {
                               title="Mark all players"
                             >
                               <Users className="h-3 w-3" />
+                            </Button>
+                          )}
+                          {isSystemAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 ml-1 text-destructive hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleClearAvailability('column', undefined, item.id)
+                              }}
+                              title="Clear column (Admin)"
+                            >
+                              <XIcon className="h-3 w-3" />
                             </Button>
                           )}
                         </div>
@@ -870,8 +1115,8 @@ export default function AvailabilityPage() {
                           }
                         }}
                       >
-                        <div className="text-xs font-medium mb-1 text-left px-1">
-                          {dateTimeText}
+                        <div className="text-xs font-medium mb-1 text-left px-1 text-foreground">
+                          {dateTimeText || 'No date'}
                         </div>
                         <div className={cn(
                           "text-xs font-medium",
@@ -943,45 +1188,11 @@ export default function AvailabilityPage() {
                     {/* Player column */}
                     <td className="sticky left-0 bg-background p-2 border-r z-10">
                       <div className="flex items-center gap-2">
-                        <div className="relative">
-                          <Avatar className="h-10 w-10">
-                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                              {getInitials(player.full_name)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <button
-                                type="button"
-                                className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-blue-500 text-white text-[10px] flex items-center justify-center hover:bg-blue-600"
-                              >
-                                <Info className="h-3 w-3" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-64">
-                              <div className="space-y-2 text-sm">
-                                <div>
-                                  <strong>Name:</strong> {player.full_name}
-                                </div>
-                                {player.email && (
-                                  <div>
-                                    <strong>Email:</strong> {player.email}
-                                  </div>
-                                )}
-                                {player.phone && (
-                                  <div>
-                                    <strong>Phone:</strong> {player.phone}
-                                  </div>
-                                )}
-                                {player.ntrp_rating && (
-                                  <div>
-                                    <strong>NTRP:</strong> {player.ntrp_rating}
-                                  </div>
-                                )}
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                        </div>
+                        <Avatar className="h-10 w-10">
+                          <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                            {getInitials(player.full_name)}
+                          </AvatarFallback>
+                        </Avatar>
                         <div className="flex-1">
                           <span className="text-sm font-medium">{player.full_name}</span>
                           {isCaptain && (
@@ -1019,7 +1230,21 @@ export default function AvailabilityPage() {
                       const isOpen = openPopovers[popoverKey] || false
                       
                       return (
-                        <td key={item.id} className="p-2 text-center border-r">
+                        <td key={item.id} className="p-2 text-center border-r relative group">
+                          {isSystemAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="absolute top-1 right-1 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive z-10"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleClearAvailability('cell', player.id, item.id)
+                              }}
+                              title="Clear cell (Admin)"
+                            >
+                              <XIcon className="h-3 w-3" />
+                            </Button>
+                          )}
                           {isCaptain ? (
                             <Popover open={isOpen} onOpenChange={(open) => setOpenPopovers(prev => ({ ...prev, [popoverKey]: open }))}>
                               <PopoverTrigger asChild>
@@ -1145,6 +1370,29 @@ export default function AvailabilityPage() {
                 disabled={!bulkStatus}
               >
                 Confirm
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Clear Availability Confirmation Dialog (Sysadmin) */}
+        <AlertDialog open={clearAvailabilityDialog.open} onOpenChange={(open) => {
+          if (!open) setClearAvailabilityDialog({ open: false, type: null })
+        }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear Availability?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {clearAvailabilityDialog.type === 'cell' && 'Are you sure you want to clear availability for this player and event?'}
+                {clearAvailabilityDialog.type === 'column' && 'Are you sure you want to clear availability for all players for this event?'}
+                {clearAvailabilityDialog.type === 'row' && 'Are you sure you want to clear availability for all events for this player?'}
+                {clearAvailabilityDialog.type === 'grid' && 'Are you sure you want to clear ALL availability for this entire grid? This action cannot be undone.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmClearAvailability} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                Clear
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

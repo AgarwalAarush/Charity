@@ -22,7 +22,7 @@ import {
   getPreviousWeek,
   getNextWeek
 } from '@/lib/calendar-utils'
-import { Plus, Check, X, HelpCircle } from 'lucide-react'
+import { Plus, Check, X, HelpCircle, ArrowLeft } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { WeekView } from '@/components/calendar/week-view'
@@ -471,12 +471,20 @@ export default function CalendarPage() {
     <div className="flex flex-col min-h-screen pb-16">
       <Header title="Calendar" />
 
-      <main className="flex-1 p-4 space-y-4">
+      <main className="flex-1 p-4 space-y-2">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         {/* Date Navigation */}
         <Card>
-          <CardContent className="p-3">
+          <CardContent className="p-2">
 
-            <div className="flex items-center gap-2 mt-3">
+            <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -542,7 +550,7 @@ export default function CalendarPage() {
         {/* Team Filter Chips - Quick Access */}
         {teams.length > 1 && (
           <Card>
-            <CardContent className="p-3">
+            <CardContent className="p-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-medium text-muted-foreground mr-1">Teams:</span>
                 {teams.map((team) => {
@@ -602,7 +610,7 @@ export default function CalendarPage() {
 
         {/* Event Type Filter */}
         <Card>
-          <CardContent className="p-3">
+          <CardContent className="p-2">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground mr-1">Event Types:</span>
               {['match', 'practice', 'warmup', 'other'].map((eventType) => {

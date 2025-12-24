@@ -3,19 +3,20 @@ import { cn } from './utils'
 
 /**
  * Get the color classes for an event type badge
+ * This is the centralized styling - all badges should use this
  */
 export function getEventTypeBadgeClass(eventType?: EventType): string {
   switch (eventType) {
     case 'practice':
-      return 'bg-blue-100 text-blue-800 border-blue-300 hover:bg-blue-200'
+      return 'bg-blue-400 !text-white'
     case 'warmup':
-      return 'bg-orange-100 text-orange-800 border-orange-300 hover:bg-orange-200'
+      return 'bg-orange-500 !text-white'
     case 'social':
-      return 'bg-pink-100 text-pink-800 border-pink-300 hover:bg-pink-200'
+      return 'bg-pink-500 !text-white'
     case 'other':
-      return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-600'
+      return 'bg-purple-500 !text-white'
     default:
-      return 'bg-purple-500 text-white border-purple-600 hover:bg-purple-600'
+      return 'bg-purple-500 !text-white'
   }
 }
 
@@ -48,5 +49,7 @@ export function getEventTypes(): { value: EventType; label: string }[] {
     { value: 'other', label: 'Other' },
   ]
 }
+
+
 
 

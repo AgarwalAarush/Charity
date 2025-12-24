@@ -84,3 +84,5 @@ If you still get the "schema cache" error:
 After completing all steps, try creating a recurring event. It should work without errors!
 
 
+
+

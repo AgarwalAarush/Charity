@@ -8,6 +8,7 @@ import { getEventTypeBadgeClass, getEventTypeLabel } from '@/lib/event-type-colo
 import { formatTime, formatDate, calculateEndTime } from '@/lib/utils'
 import { Check, X, HelpCircle, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 
 interface CalendarItemTileProps {
   item: CalendarItem
@@ -69,37 +70,8 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
                   )
                 )}
               </Badge>
-            ) : item.eventType === 'practice' ? (
-              <Badge 
-                variant="default" 
-                className="text-[10px] px-1 py-0 h-4 bg-blue-400 !text-white"
-              >
-                Practice
-              </Badge>
-            ) : item.eventType === 'warmup' ? (
-              <Badge 
-                variant="default" 
-                className="text-[10px] px-1 py-0 h-4 bg-orange-500"
-              >
-                Warmup
-              </Badge>
-            ) : item.eventType === 'social' ? (
-              <Badge 
-                variant="default" 
-                className="text-[10px] px-1 py-0 h-4 bg-pink-500"
-              >
-                Social
-              </Badge>
             ) : item.eventType ? (
-              <Badge 
-                variant="secondary" 
-                className={cn(
-                  "text-[10px] px-1 py-0 h-4",
-                  getEventTypeBadgeClass(item.eventType)
-                )}
-              >
-                {getEventTypeLabel(item.eventType)}
-              </Badge>
+              <EventTypeBadge eventType={item.eventType} />
             ) : null}
             {getAvailabilityIcon()}
           </div>

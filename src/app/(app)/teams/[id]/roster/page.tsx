@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,18 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { createClient } from '@/lib/supabase/client'
 import { RosterMember } from '@/types/database.types'
-import { Plus, Upload, MoreVertical, Crown, MessageCircle, User, Edit, Trash2 } from 'lucide-react'
+import { 
+  Plus, 
+  Upload, 
+  MoreVertical, 
+  Crown, 
+  MessageCircle, 
+  User, 
+  Edit, 
+  Trash2, 
+  Phone, 
+  ArrowLeft 
+} from 'lucide-react'
 import { AddPlayerDialog } from '@/components/teams/add-player-dialog'
 import { ImportPlayersDialog } from '@/components/teams/import-players-dialog'
 import { EditPlayerDialog } from '@/components/teams/edit-player-dialog'
@@ -28,6 +39,7 @@ import { useToast } from '@/hooks/use-toast'
 
 export default function RosterPage() {
   const params = useParams()
+  const router = useRouter()
   const teamId = params.id as string
   const [roster, setRoster] = useState<RosterMember[]>([])
   const [loading, setLoading] = useState(true)
@@ -174,6 +186,14 @@ export default function RosterPage() {
       <Header title="Roster" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">{roster.length} Players</h2>
           {isCaptain && (
@@ -243,6 +263,12 @@ export default function RosterPage() {
                         )}
                         {player.email && (
                           <span className="truncate">{player.email}</span>
+                        )}
+                        {player.phone && (
+                          <span className="flex items-center gap-1">
+                            <Phone className="h-3 w-3" />
+                            {player.phone}
+                          </span>
                         )}
                       </div>
                     </div>

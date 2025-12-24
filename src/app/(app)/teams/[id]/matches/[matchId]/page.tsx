@@ -675,6 +675,13 @@ Thank you`)
       <Header title="Match Details" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
         {/* Match Info */}
         <Card>
           <CardContent className="p-4 space-y-3">
