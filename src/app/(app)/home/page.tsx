@@ -34,6 +34,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { getEventTypes, getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import { EventTypeBadge } from '@/components/events/event-type-badge'
+import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 
 interface UpcomingMatch {
@@ -80,6 +81,7 @@ export default function HomePage() {
   const [nextMatch, setNextMatch] = useState<UpcomingMatch | null>(null)
   const [upcomingMatches, setUpcomingMatches] = useState<UpcomingMatch[]>([])
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([])
+  const [upcomingPersonalActivities, setUpcomingPersonalActivities] = useState<UpcomingPersonalActivity[]>([])
   const [allItems, setAllItems] = useState<CalendarItem[]>([])
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match', 'practice', 'warmup', 'social', 'other'])
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
@@ -227,8 +229,10 @@ export default function HomePage() {
       rosterMap[m.team_id] = m.id
     })
 
-    // Get upcoming matches for user's teams
+    // Get today's date for filtering upcoming items
     const today = new Date().toISOString().split('T')[0]
+
+    // Get upcoming matches for user's teams
     const { data: matches } = await supabase
       .from('matches')
       .select(`
@@ -423,10 +427,109 @@ export default function HomePage() {
 
     setUpcomingEvents(processedEvents)
 
-    // Combine matches and events, sort by date/time
+    // Load personal activities user is invited to or created
+    const userEmail = (await supabase.from('profiles').select('email').eq('id', user.id).single()).data?.email
+
+    // Load activities user created
+    const { data: createdActivities } = await supabase
+      .from('personal_events')
+      .select('*')
+      .eq('creator_id', user.id)
+      .gte('date', today)
+      .order('date', { ascending: true })
+      .order('time', { ascending: true })
+
+    // Load activities user is invited to
+    const { data: invitations } = await supabase
+      .from('event_invitations')
+      .select('*, personal_events(*)')
+      .or(`invitee_id.eq.${user.id},invitee_email.eq.${userEmail || ''}`)
+      .in('status', ['pending', 'accepted'])
+
+    // Load attendee status for personal activities
+    const personalActivityIds: string[] = []
+    if (createdActivities) {
+      createdActivities.forEach(a => personalActivityIds.push(a.id))
+    }
+    if (invitations) {
+      invitations.forEach((inv: any) => {
+        if (inv.personal_events && !personalActivityIds.includes(inv.personal_events.id)) {
+          personalActivityIds.push(inv.personal_events.id)
+        }
+      })
+    }
+
+    let attendeeStatuses: Record<string, string> = {}
+    if (personalActivityIds.length > 0) {
+      const { data: attendees } = await supabase
+        .from('event_attendees')
+        .select('personal_event_id, availability_status')
+        .in('personal_event_id', personalActivityIds)
+        .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
+
+      if (attendees) {
+        attendees.forEach((att: any) => {
+          attendeeStatuses[att.personal_event_id] = att.availability_status
+        })
+      }
+    }
+
+    const processedPersonalActivities: UpcomingPersonalActivity[] = []
+    
+    // Add created activities
+    if (createdActivities) {
+      createdActivities.forEach(activity => {
+        processedPersonalActivities.push({
+          id: activity.id,
+          date: activity.date,
+          time: activity.time,
+          title: activity.title,
+          activity_type: activity.activity_type,
+          location: activity.location,
+          team_id: activity.team_id,
+        })
+      })
+    }
+
+    // Add invited activities
+    if (invitations) {
+      invitations.forEach((inv: any) => {
+        if (inv.personal_events && inv.personal_events.date >= today) {
+          const existing = processedPersonalActivities.find(a => a.id === inv.personal_events.id)
+          if (!existing) {
+            processedPersonalActivities.push({
+              id: inv.personal_events.id,
+              date: inv.personal_events.date,
+              time: inv.personal_events.time,
+              title: inv.personal_events.title,
+              activity_type: inv.personal_events.activity_type,
+              location: inv.personal_events.location,
+              team_id: inv.personal_events.team_id,
+              availability_status: attendeeStatuses[inv.personal_events.id],
+            })
+          }
+        }
+      })
+    }
+
+    setUpcomingPersonalActivities(processedPersonalActivities)
+
+    // Combine matches, events, and personal activities, sort by date/time
     const combined: CalendarItem[] = [
       ...processedMatches.map(m => ({ ...m, type: 'match' as const })),
-      ...processedEvents.map(e => ({ ...e, type: 'event' as const }))
+      ...processedEvents.map(e => ({ ...e, type: 'event' as const })),
+      ...processedPersonalActivities.map(a => ({
+        id: a.id,
+        type: 'personal_activity' as const,
+        date: a.date,
+        time: a.time,
+        teamId: a.team_id || undefined,
+        teamName: undefined,
+        teamColor: null,
+        name: a.title,
+        activityType: a.activity_type as any,
+        availabilityStatus: a.availability_status as any,
+      }))
     ].sort((a, b) => {
       const dateCompare = a.date.localeCompare(b.date)
       if (dateCompare !== 0) return dateCompare
@@ -877,6 +980,77 @@ export default function HomePage() {
                     </CardContent>
                   </Card>
                 </Link>
+                  )
+                } else if (item.type === 'personal_activity') {
+                  const activity = item
+                  const personalActivity = upcomingPersonalActivities.find(a => a.id === activity.id)
+                  return (
+                    <Link key={activity.id} href={`/activities/${activity.id}`}>
+                      <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <ActivityTypeBadge activityType={activity.activityType} />
+                                <span className="font-medium truncate">
+                                  {activity.name}
+                                </span>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {formatDate(activity.date, 'MMM d')} at {formatTime(activity.time)}
+                              </div>
+                              {activity.teamId && (
+                                <Badge variant="outline" className="text-xs mt-1">
+                                  {activity.teamName}
+                                </Badge>
+                              )}
+                            </div>
+                            {personalActivity?.availability_status && (
+                              <div className="flex flex-col items-end gap-2 shrink-0">
+                                <Select
+                                  value={personalActivity.availability_status}
+                                  onValueChange={(value) => updatePersonalActivityRSVP(activity.id, value as any)}
+                                >
+                                  <SelectTrigger 
+                                    className="h-7 text-xs w-[110px]"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <SelectValue>
+                                      <div className="flex items-center gap-1.5">
+                                        {getAvailabilityIcon(personalActivity.availability_status)}
+                                        <span className="capitalize">
+                                          {personalActivity.availability_status === 'maybe' ? 'Tentative' : personalActivity.availability_status}
+                                        </span>
+                                      </div>
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent onClick={(e) => e.stopPropagation()}>
+                                    <SelectItem value="available">
+                                      <div className="flex items-center gap-2">
+                                        <Check className="h-3 w-3 text-green-500" />
+                                        <span>Available</span>
+                                      </div>
+                                    </SelectItem>
+                                    <SelectItem value="maybe">
+                                      <div className="flex items-center gap-2">
+                                        <HelpCircle className="h-3 w-3 text-yellow-500" />
+                                        <span>Tentative</span>
+                                      </div>
+                                    </SelectItem>
+                                    <SelectItem value="unavailable">
+                                      <div className="flex items-center gap-2">
+                                        <X className="h-3 w-3 text-red-500" />
+                                        <span>Unavailable</span>
+                                      </div>
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </Link>
                   )
                 } else {
                   const event = item as UpcomingEvent

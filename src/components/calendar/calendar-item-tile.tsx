@@ -39,6 +39,8 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
   const handleClick = () => {
     if (item.type === 'match') {
       router.push(`/teams/${item.teamId}/matches/${item.id}`)
+    } else if (item.type === 'personal_activity') {
+      router.push(`/activities/${item.id}`)
     } else {
       router.push(`/teams/${item.teamId}/events/${item.id}`)
     }
@@ -70,6 +72,8 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
                   )
                 )}
               </Badge>
+            ) : item.type === 'personal_activity' && item.activityType ? (
+              <ActivityTypeBadge activityType={item.activityType} />
             ) : item.eventType ? (
               <EventTypeBadge eventType={item.eventType} />
             ) : null}
@@ -94,18 +98,28 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
           
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <p className="text-xs text-muted-foreground">
-              {item.type === 'event' && item.duration 
+              {(item.type === 'event' || item.type === 'personal_activity') && item.duration 
                 ? `${formatTime(item.time)}-${formatTime(calculateEndTime(item.time, item.duration))}`
-                : item.type === 'event' && !item.duration
+                : (item.type === 'event' || item.type === 'personal_activity') && !item.duration
                 ? `${formatTime(item.time)} (no end time)`
                 : formatTime(item.time)}
             </p>
-            <p className={cn(
-              'text-muted-foreground truncate',
-              compact ? 'text-[10px]' : 'text-xs'
-            )}>
-              {item.teamName}
-            </p>
+            {item.teamName && (
+              <p className={cn(
+                'text-muted-foreground truncate',
+                compact ? 'text-[10px]' : 'text-xs'
+              )}>
+                {item.teamName}
+              </p>
+            )}
+            {item.type === 'personal_activity' && (
+              <p className={cn(
+                'text-muted-foreground truncate',
+                compact ? 'text-[10px]' : 'text-xs'
+              )}>
+                Personal Activity
+              </p>
+            )}
             {item.availabilitySummary && !compact && (
               <p className="text-xs text-muted-foreground">
                 • {item.availabilitySummary.available} available

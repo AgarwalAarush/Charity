@@ -1,4 +1,4 @@
-import { EventType } from './calendar-utils'
+import { EventType, ActivityType } from './calendar-utils'
 import { cn } from './utils'
 
 /**
@@ -21,6 +21,27 @@ export function getEventTypeBadgeClass(eventType?: EventType): string {
 }
 
 /**
+ * Get the color classes for an activity type badge
+ * Distinct colors from event types to differentiate personal activities
+ */
+export function getActivityTypeBadgeClass(activityType?: ActivityType): string {
+  switch (activityType) {
+    case 'scrimmage':
+      return 'bg-green-600 !text-white'
+    case 'lesson':
+      return 'bg-indigo-600 !text-white'
+    case 'class':
+      return 'bg-teal-600 !text-white'
+    case 'flex_league':
+      return 'bg-amber-600 !text-white'
+    case 'other':
+      return 'bg-gray-600 !text-white'
+    default:
+      return 'bg-gray-600 !text-white'
+  }
+}
+
+/**
  * Get the display label for an event type
  */
 export function getEventTypeLabel(eventType?: EventType): string {
@@ -39,6 +60,26 @@ export function getEventTypeLabel(eventType?: EventType): string {
 }
 
 /**
+ * Get the display label for an activity type
+ */
+export function getActivityTypeLabel(activityType?: ActivityType): string {
+  switch (activityType) {
+    case 'scrimmage':
+      return 'Scrimmage'
+    case 'lesson':
+      return 'Lesson'
+    case 'class':
+      return 'Class'
+    case 'flex_league':
+      return 'Flex League'
+    case 'other':
+      return 'Other'
+    default:
+      return 'Activity'
+  }
+}
+
+/**
  * Get all available event types
  */
 export function getEventTypes(): { value: EventType; label: string }[] {
@@ -49,6 +90,20 @@ export function getEventTypes(): { value: EventType; label: string }[] {
     { value: 'other', label: 'Other' },
   ]
 }
+
+/**
+ * Get all available activity types
+ */
+export function getActivityTypes(): { value: ActivityType; label: string }[] {
+  return [
+    { value: 'scrimmage', label: 'Scrimmage' },
+    { value: 'lesson', label: 'Lesson' },
+    { value: 'class', label: 'Class' },
+    { value: 'flex_league', label: 'Flex League' },
+    { value: 'other', label: 'Other' },
+  ]
+}
+
 
 
 

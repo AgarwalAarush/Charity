@@ -22,9 +22,10 @@ import {
   getPreviousWeek,
   getNextWeek
 } from '@/lib/calendar-utils'
-import { Plus, Check, X, HelpCircle, ArrowLeft } from 'lucide-react'
+import { Plus, Check, X, HelpCircle, ArrowLeft, CheckSquare, Square, Save, CheckCircle2 } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import { WeekView } from '@/components/calendar/week-view'
 import { MonthView } from '@/components/calendar/month-view'
 import { CalendarItemTile } from '@/components/calendar/calendar-item-tile'
@@ -63,10 +64,14 @@ export default function CalendarPage() {
   const [teams, setTeams] = useState<TeamInfo[]>([])
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match', 'practice', 'warmup', 'other'])
+  const [showPersonalActivities, setShowPersonalActivities] = useState(true)
   const [loading, setLoading] = useState(true)
   const [teamsLoaded, setTeamsLoaded] = useState(false)
   const [showAddEventDialog, setShowAddEventDialog] = useState(false)
   const [selectedTeamForEvent, setSelectedTeamForEvent] = useState<string | null>(null)
+  const [bulkSelectMode, setBulkSelectMode] = useState(false)
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [bulkStatus, setBulkStatus] = useState<'available' | 'maybe' | 'unavailable'>('available')
   const { toast } = useToast()
 
   useEffect(() => {
@@ -79,7 +84,7 @@ export default function CalendarPage() {
     if (teamsLoaded) {
       loadCalendarData()
     }
-  }, [currentDate, viewMode, numWeeks, teams, selectedTeamIds, selectedEventTypes, teamsLoaded])
+  }, [currentDate, viewMode, numWeeks, teams, selectedTeamIds, selectedEventTypes, teamsLoaded, showPersonalActivities])
 
   async function loadTeams() {
     const supabase = createClient()
@@ -241,7 +246,123 @@ export default function CalendarPage() {
       }
     }
 
-    // Load user's availability for these items
+    // Load personal activities if enabled
+    if (showPersonalActivities) {
+      // Load activities user created
+      const { data: createdActivities } = await supabase
+        .from('personal_events')
+        .select('*')
+        .eq('creator_id', user.id)
+        .gte('date', dateRange.start)
+      
+      if (viewMode !== 'list') {
+        // For week/month views, also filter by end date
+        const { data: createdActivitiesFiltered } = await supabase
+          .from('personal_events')
+          .select('*')
+          .eq('creator_id', user.id)
+          .gte('date', dateRange.start)
+          .lte('date', dateRange.end)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+
+        if (createdActivitiesFiltered) {
+          createdActivitiesFiltered.forEach((activity: any) => {
+            items.push({
+              id: activity.id,
+              type: 'personal_activity',
+              date: activity.date,
+              time: activity.time,
+              duration: activity.duration || null,
+              teamId: activity.team_id || undefined,
+              teamName: undefined,
+              teamColor: null,
+              name: activity.title,
+              activityType: activity.activity_type,
+              creatorId: activity.creator_id,
+            })
+          })
+        }
+      } else {
+        // For list view, load all upcoming
+        const { data: createdActivitiesList } = await supabase
+          .from('personal_events')
+          .select('*')
+          .eq('creator_id', user.id)
+          .gte('date', dateRange.start)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+
+        if (createdActivitiesList) {
+          createdActivitiesList.forEach((activity: any) => {
+            items.push({
+              id: activity.id,
+              type: 'personal_activity',
+              date: activity.date,
+              time: activity.time,
+              duration: activity.duration || null,
+              teamId: activity.team_id || undefined,
+              teamName: undefined,
+              teamColor: null,
+              name: activity.title,
+              activityType: activity.activity_type,
+              creatorId: activity.creator_id,
+            })
+          })
+        }
+      }
+
+      // Load activities user is invited to
+      const userEmail = (await supabase.from('profiles').select('email').eq('id', user.id).single()).data?.email
+      
+      const { data: invitations } = await supabase
+        .from('event_invitations')
+        .select('*, personal_events(*)')
+        .or(`invitee_id.eq.${user.id},invitee_email.eq.${userEmail || ''}`)
+        .in('status', ['pending', 'accepted'])
+        .gte('personal_events.date', dateRange.start)
+
+      if (invitations) {
+        invitations.forEach((inv: any) => {
+          if (inv.personal_events && (!viewMode || viewMode === 'list' || inv.personal_events.date <= dateRange.end)) {
+            items.push({
+              id: inv.personal_events.id,
+              type: 'personal_activity',
+              date: inv.personal_events.date,
+              time: inv.personal_events.time,
+              duration: inv.personal_events.duration || null,
+              teamId: inv.personal_events.team_id || undefined,
+              teamName: undefined,
+              teamColor: null,
+              name: inv.personal_events.title,
+              activityType: inv.personal_events.activity_type,
+              creatorId: inv.personal_events.creator_id,
+            })
+          }
+        })
+      }
+
+      // Load user's attendee status for personal activities
+      const personalActivityIds = items.filter(i => i.type === 'personal_activity').map(i => i.id)
+      if (personalActivityIds.length > 0) {
+        const { data: attendees } = await supabase
+          .from('event_attendees')
+          .select('personal_event_id, availability_status')
+          .in('personal_event_id', personalActivityIds)
+          .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
+
+        if (attendees) {
+          attendees.forEach((att: any) => {
+            const item = items.find(i => i.id === att.personal_event_id && i.type === 'personal_activity')
+            if (item) {
+              item.availabilityStatus = att.availability_status as any
+            }
+          })
+        }
+      }
+    }
+
+    // Load user's availability for team items
     const { data: rosterMember } = await supabase
       .from('roster_members')
       .select('id')
@@ -251,24 +372,26 @@ export default function CalendarPage() {
       .maybeSingle()
 
     if (rosterMember) {
-      const itemIds = items.map(i => i.id)
+      const itemIds = items.filter(i => i.type !== 'personal_activity').map(i => i.id)
       
-      const { data: availability } = await supabase
-        .from('availability')
-        .select('*')
-        .eq('roster_member_id', rosterMember.id)
+      if (itemIds.length > 0) {
+        const { data: availability } = await supabase
+          .from('availability')
+          .select('*')
+          .eq('roster_member_id', rosterMember.id)
 
-      if (availability) {
-        // Map availability to items
-        availability.forEach((avail: Availability) => {
-          const itemId = avail.match_id || avail.event_id
-          if (itemId) {
-            const item = items.find(i => i.id === itemId)
-            if (item) {
-              item.availabilityStatus = avail.status as any
+        if (availability) {
+          // Map availability to items
+          availability.forEach((avail: Availability) => {
+            const itemId = avail.match_id || avail.event_id
+            if (itemId) {
+              const item = items.find(i => i.id === itemId)
+              if (item) {
+                item.availabilityStatus = avail.status as any
+              }
             }
-          }
-        })
+          })
+        }
       }
     }
 
@@ -303,7 +426,10 @@ export default function CalendarPage() {
           availabilityQuery = availabilityQuery.in('event_id', eventItemIds)
         } else {
           // No items to load availability for
-          setCalendarItems(items)
+          const filteredItems = showPersonalActivities 
+            ? items 
+            : items.filter(i => i.type !== 'personal_activity')
+          setCalendarItems(filteredItems)
           setLoading(false)
           return
         }
@@ -365,7 +491,12 @@ export default function CalendarPage() {
       }
     }
 
-    setCalendarItems(items)
+    // Filter items based on personal activities toggle
+    const filteredItems = showPersonalActivities 
+      ? items 
+      : items.filter(i => i.type !== 'personal_activity')
+
+    setCalendarItems(filteredItems)
     setLoading(false)
   }
 
@@ -392,6 +523,67 @@ export default function CalendarPage() {
   async function updateAvailability(item: CalendarItem, rosterMemberId: string, status: 'available' | 'maybe' | 'unavailable') {
     const supabase = createClient()
     
+    // Handle personal activities differently
+    if (item.type === 'personal_activity') {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('id', user.id)
+        .single()
+      const userEmail = profileData?.email
+
+      // Check if attendee record exists
+      const { data: existingAttendee } = await supabase
+        .from('event_attendees')
+        .select('id')
+        .eq('personal_event_id', item.id)
+        .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
+        .maybeSingle()
+
+      let error = null
+      if (existingAttendee) {
+        const result = await supabase
+          .from('event_attendees')
+          .update({ availability_status: status })
+          .eq('id', existingAttendee.id)
+        error = result.error
+      } else {
+        const insertData: any = {
+          personal_event_id: item.id,
+          availability_status: status,
+        }
+        if (user.id) {
+          insertData.user_id = user.id
+        }
+        if (userEmail) {
+          insertData.email = userEmail
+        }
+        const result = await supabase
+          .from('event_attendees')
+          .insert(insertData)
+        error = result.error
+      }
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Updated',
+          description: `Availability set to ${status}`,
+        })
+        loadCalendarData()
+      }
+      return
+    }
+    
+    // Handle team events/matches
     // Find existing availability
     const { data: existing } = await supabase
       .from('availability')
@@ -437,6 +629,159 @@ export default function CalendarPage() {
       // Reload calendar data to reflect the change
       loadCalendarData()
     }
+  }
+
+  function handleToggleItemSelection(itemId: string) {
+    setSelectedItems(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId)
+      } else {
+        newSet.add(itemId)
+      }
+      return newSet
+    })
+  }
+
+  function handleSelectAll() {
+    if (selectedItems.size === calendarItems.length) {
+      setSelectedItems(new Set())
+    } else {
+      setSelectedItems(new Set(calendarItems.map(item => item.id)))
+    }
+  }
+
+  async function handleBulkUpdate() {
+    if (selectedItems.size === 0) {
+      toast({
+        title: 'No items selected',
+        description: 'Please select at least one item to update',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', user.id)
+      .single()
+    const userEmail = profileData?.email
+
+    const errors: string[] = []
+    let successCount = 0
+
+    for (const itemId of selectedItems) {
+      const item = calendarItems.find(i => i.id === itemId)
+      if (!item) continue
+
+      // Handle personal activities
+      if (item.type === 'personal_activity') {
+        const { data: existingAttendee } = await supabase
+          .from('event_attendees')
+          .select('id')
+          .eq('personal_event_id', itemId)
+          .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
+          .maybeSingle()
+
+        if (existingAttendee) {
+          const { error } = await supabase
+            .from('event_attendees')
+            .update({ availability_status: bulkStatus })
+            .eq('id', existingAttendee.id)
+          if (error) {
+            errors.push(`${item.name}: ${error.message}`)
+          } else {
+            successCount++
+          }
+        } else {
+          const insertData: any = {
+            personal_event_id: itemId,
+            availability_status: bulkStatus,
+          }
+          if (user.id) {
+            insertData.user_id = user.id
+          }
+          if (userEmail) {
+            insertData.email = userEmail
+          }
+          const { error } = await supabase
+            .from('event_attendees')
+            .insert(insertData)
+          if (error) {
+            errors.push(`${item.name}: ${error.message}`)
+          } else {
+            successCount++
+          }
+        }
+        continue
+      }
+
+      // Handle team events/matches
+      const rosterMemberId = teams.find(t => t.id === item.teamId)?.rosterMemberId
+      if (!rosterMemberId) {
+        errors.push(`${item.name}: No roster membership found`)
+        continue
+      }
+
+      const { data: existing } = await supabase
+        .from('availability')
+        .select('id')
+        .eq('roster_member_id', rosterMemberId)
+        .eq(item.type === 'match' ? 'match_id' : 'event_id', itemId)
+        .maybeSingle()
+
+      if (existing) {
+        const { error } = await supabase
+          .from('availability')
+          .update({ status: bulkStatus })
+          .eq('id', existing.id)
+        if (error) {
+          errors.push(`${item.name}: ${error.message}`)
+        } else {
+          successCount++
+        }
+      } else {
+        const insertData: any = {
+          roster_member_id: rosterMemberId,
+          status: bulkStatus,
+        }
+        if (item.type === 'match') {
+          insertData.match_id = itemId
+        } else {
+          insertData.event_id = itemId
+        }
+        const { error } = await supabase
+          .from('availability')
+          .insert(insertData)
+        if (error) {
+          errors.push(`${item.name}: ${error.message}`)
+        } else {
+          successCount++
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      toast({
+        title: 'Partial Success',
+        description: `Updated ${successCount} item(s). ${errors.length} error(s): ${errors.slice(0, 2).join('; ')}`,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: 'Success',
+        description: `Updated availability for ${successCount} item(s)`,
+      })
+    }
+
+    setSelectedItems(new Set())
+    setBulkSelectMode(false)
+    loadCalendarData()
   }
 
   const captainTeams = teams.filter(t => t.isCaptain)
@@ -505,6 +850,28 @@ export default function CalendarPage() {
                   <span className="text-xs text-muted-foreground">Practice, scrimmage, social</span>
                 </>
               )}
+              <Button
+                variant={bulkSelectMode ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setBulkSelectMode(!bulkSelectMode)
+                  if (bulkSelectMode) {
+                    setSelectedItems(new Set())
+                  }
+                }}
+              >
+                {bulkSelectMode ? (
+                  <>
+                    <CheckSquare className="h-4 w-4 mr-1" />
+                    Done
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-4 w-4 mr-1" />
+                    Bulk Select
+                  </>
+                )}
+              </Button>
 
               <Tabs value={viewMode} onValueChange={(v) => {
                 const newMode = v as ViewMode
@@ -639,6 +1006,82 @@ export default function CalendarPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Personal Activities Filter */}
+        <Card>
+          <CardContent className="p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground mr-1">Personal Activities:</span>
+              <Button
+                variant={showPersonalActivities ? "default" : "outline"}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setShowPersonalActivities(!showPersonalActivities)}
+              >
+                {showPersonalActivities ? 'Show' : 'Hide'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Quick Update Panel - shown when items are selected in bulk mode */}
+        {bulkSelectMode && selectedItems.size > 0 && (
+          <Card className="sticky top-0 z-10 bg-background border-primary">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">
+                    {selectedItems.size} item{selectedItems.size !== 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={bulkStatus} onValueChange={(value) => setBulkStatus(value as 'available' | 'maybe' | 'unavailable')}>
+                    <SelectTrigger className="w-[140px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="available">
+                        <div className="flex items-center gap-2">
+                          <Check className="h-4 w-4 text-green-500" />
+                          <span>Available</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="maybe">
+                        <div className="flex items-center gap-2">
+                          <HelpCircle className="h-4 w-4 text-yellow-500" />
+                          <span>Maybe</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="unavailable">
+                        <div className="flex items-center gap-2">
+                          <X className="h-4 w-4 text-red-500" />
+                          <span>Unavailable</span>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    onClick={handleBulkUpdate}
+                  >
+                    <Save className="h-4 w-4 mr-1" />
+                    Update All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedItems(new Set())
+                      setBulkSelectMode(false)
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Calendar View */}
         {loading ? (

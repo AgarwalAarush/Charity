@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { createClient } from '@/lib/supabase/client'
 import { Team, Profile } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
-import { Users, MessageCircle, ChevronRight, Mail, Check, X, ArrowLeft } from 'lucide-react'
+import { Users, MessageCircle, ChevronRight, Mail, Check, X, ArrowLeft, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 
@@ -48,12 +48,34 @@ interface TeamInvitation {
   inviter?: Profile
 }
 
+interface EventInvitation {
+  id: string
+  event_id: string
+  inviter_id: string
+  invitee_id?: string | null
+  invitee_email: string
+  invitee_name?: string | null
+  status: string
+  message?: string | null
+  created_at: string
+  personal_events?: {
+    id: string
+    title: string
+    activity_type: string
+    date: string
+    time: string
+  }
+  inviter?: Profile
+}
+
 export default function MessagesPage() {
   const [teamConversations, setTeamConversations] = useState<TeamConversation[]>([])
   const [dmConversations, setDMConversations] = useState<DMConversation[]>([])
   const [invitations, setInvitations] = useState<TeamInvitation[]>([])
+  const [eventInvitations, setEventInvitations] = useState<EventInvitation[]>([])
   const [loading, setLoading] = useState(true)
   const [respondingToInvite, setRespondingToInvite] = useState<string | null>(null)
+  const [respondingToEventInvite, setRespondingToEventInvite] = useState<string | null>(null)
   const router = useRouter()
   const { toast } = useToast()
 
@@ -104,6 +126,73 @@ export default function MessagesPage() {
           inviter: invite.inviter,
         }))
         setInvitations(invitationsWithData as any)
+      }
+
+      // Load pending event invitations
+      try {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', user.id)
+          .single()
+        
+        const userEmail = profileData?.email
+        
+        // Build query conditionally
+        let eventInvitesQuery = supabase
+          .from('event_invitations')
+          .select('*, personal_events(*)')
+          .eq('status', 'pending')
+        
+        // Add invitee conditions - use OR only if we have an email
+        if (userEmail) {
+          eventInvitesQuery = eventInvitesQuery.or(`invitee_id.eq.${user.id},invitee_email.eq.${userEmail}`)
+        } else {
+          // If no email, only query by invitee_id
+          eventInvitesQuery = eventInvitesQuery.eq('invitee_id', user.id)
+        }
+        
+        const { data: eventInvites, error: eventInvitesError } = await eventInvitesQuery
+          .order('created_at', { ascending: false })
+        
+        if (eventInvitesError) {
+          console.error('Error loading event invitations:', {
+            message: eventInvitesError.message || 'Unknown error',
+            details: eventInvitesError.details || null,
+            hint: eventInvitesError.hint || null,
+            code: eventInvitesError.code || null,
+            error: eventInvitesError,
+          })
+          setEventInvitations([])
+        } else {
+          // Load inviter profiles separately if we have invitations
+          if (eventInvites && eventInvites.length > 0) {
+            const inviterIds = [...new Set(eventInvites.map((inv: any) => inv.inviter_id).filter(Boolean))]
+            if (inviterIds.length > 0) {
+              const { data: inviters } = await supabase
+                .from('profiles')
+                .select('id, email, full_name')
+                .in('id', inviterIds)
+              
+              // Map inviters to invitations
+              if (inviters) {
+                const inviterMap = new Map(inviters.map((inv: any) => [inv.id, inv]))
+                eventInvites.forEach((invite: any) => {
+                  invite.inviter = inviterMap.get(invite.inviter_id)
+                })
+              }
+            }
+          }
+
+          const eventInvitationsWithData = (eventInvites || []).map((invite: any) => ({
+            ...invite,
+            inviter: invite.inviter,
+          }))
+          setEventInvitations(eventInvitationsWithData)
+        }
+      } catch (err: any) {
+        console.error('Exception loading event invitations:', err)
+        setEventInvitations([])
       }
 
       // Get teams the user belongs to
@@ -325,6 +414,38 @@ export default function MessagesPage() {
     }
 
     setRespondingToInvite(null)
+  }
+
+  async function respondToEventInvitation(invitationId: string, accept: boolean) {
+    setRespondingToEventInvite(invitationId)
+    const supabase = createClient()
+
+    const { error } = await supabase
+      .from('event_invitations')
+      .update({
+        status: accept ? 'accepted' : 'declined',
+        responded_at: new Date().toISOString(),
+      })
+      .eq('id', invitationId)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+    } else {
+      toast({
+        title: accept ? 'Invitation accepted!' : 'Invitation declined',
+        description: accept 
+          ? 'You have been added to the activity' 
+          : 'The invitation has been declined',
+      })
+      // Reload to update lists
+      loadConversations()
+    }
+
+    setRespondingToEventInvite(null)
   }
 
   return (

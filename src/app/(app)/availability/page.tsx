@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/hooks/use-toast'
 import { formatDate, formatTime } from '@/lib/utils'
-import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { getEventTypeLabel, getEventTypeBadgeClass, getActivityTypeLabel, getActivityTypeBadgeClass } from '@/lib/event-type-colors'
+import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
 import {
   Select,
   SelectContent,
@@ -19,7 +20,7 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Check, X, HelpCircle, Clock, Save, Users, ChevronRight, ArrowLeft } from 'lucide-react'
+import { Loader2, Check, X, HelpCircle, Clock, Save, Users, ChevronRight, ArrowLeft, Calendar } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Event, Match, Team } from '@/types/database.types'
 import Link from 'next/link'
@@ -28,13 +29,14 @@ type AvailabilityStatus = 'available' | 'unavailable' | 'maybe' | 'late' | 'last
 
 interface EventItem {
   id: string
-  type: 'event' | 'match'
+  type: 'event' | 'match' | 'personal_activity'
   name: string
   date: string
   time: string
-  teamId: string
-  teamName: string
+  teamId?: string
+  teamName?: string
   eventType?: string | null
+  activityType?: string | null
   location?: string | null
   currentStatus?: AvailabilityStatus
 }
@@ -53,10 +55,11 @@ export default function BulkAvailabilityPage() {
   const [bulkStatus, setBulkStatus] = useState<AvailabilityStatus>('available')
   const [availabilityMap, setAvailabilityMap] = useState<Record<string, AvailabilityStatus>>({})
   const [individualChanges, setIndividualChanges] = useState<Record<string, AvailabilityStatus>>({})
+  const [showPersonalActivities, setShowPersonalActivities] = useState(false)
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [showPersonalActivities])
 
   async function loadData() {
     try {
@@ -96,7 +99,7 @@ export default function BulkAvailabilityPage() {
         .eq('user_id', user.id)
         .eq('is_active', true)
 
-      const userTeams = rosterMembers?.map(rm => (rm.teams as Team)).filter(Boolean) || []
+      const userTeams = (rosterMembers?.map(rm => (rm.teams as any)).filter(Boolean) || []) as Team[]
       setTeams(userTeams)
 
       // Get teams where user is captain or co-captain
@@ -105,60 +108,75 @@ export default function BulkAvailabilityPage() {
         .select('id, name')
         .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
 
-      const captainTeamsList = captainTeamsData || []
+      const captainTeamsList = (captainTeamsData || []) as Team[]
       setCaptainTeams(captainTeamsList)
 
-      if (userTeams.length === 0) {
+      // Get user email for personal activities
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('id', user.id)
+        .single()
+
+      // If no teams and personal activities disabled, nothing to show
+      if (userTeams.length === 0 && !showPersonalActivities) {
         setLoading(false)
         return
       }
 
-      const teamIds = userTeams.map(t => t.id)
+      const teamIds = userTeams.length > 0 ? userTeams.map(t => t.id) : []
       const rosterMemberIds = rosterMembers?.map(rm => rm.id).filter(Boolean) || []
       
       console.log('Loading availability for roster members:', rosterMemberIds)
 
-      // Get all upcoming events
+      // Get all upcoming events (only if user has teams)
       const today = new Date().toISOString().split('T')[0]
-      const { data: eventsData } = await supabase
-        .from('events')
-        .select(`
-          id,
-          event_name,
-          date,
-          time,
-          location,
-          event_type,
-          team_id,
-          teams (
+      let eventsData = null
+      let matchesData = null
+      
+      if (teamIds.length > 0) {
+        const eventsResult = await supabase
+          .from('events')
+          .select(`
             id,
-            name
-          )
-        `)
-        .in('team_id', teamIds)
-        .gte('date', today)
-        .order('date', { ascending: true })
-        .order('time', { ascending: true })
+            event_name,
+            date,
+            time,
+            location,
+            event_type,
+            team_id,
+            teams (
+              id,
+              name
+            )
+          `)
+          .in('team_id', teamIds)
+          .gte('date', today)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+        eventsData = eventsResult.data
 
-      // Get all upcoming matches
-      const { data: matchesData } = await supabase
-        .from('matches')
-        .select(`
-          id,
-          opponent_name,
-          date,
-          time,
-          venue,
-          team_id,
-          teams (
+        // Get all upcoming matches
+        const matchesResult = await supabase
+          .from('matches')
+          .select(`
             id,
-            name
-          )
-        `)
-        .in('team_id', teamIds)
-        .gte('date', today)
-        .order('date', { ascending: true })
-        .order('time', { ascending: true })
+            opponent_name,
+            date,
+            time,
+            venue,
+            team_id,
+            teams (
+              id,
+              name
+            )
+          `)
+          .in('team_id', teamIds)
+          .gte('date', today)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+        matchesData = matchesResult.data
+      }
 
       // Get existing availability
       const availMap: Record<string, AvailabilityStatus> = {}
@@ -255,13 +273,23 @@ export default function BulkAvailabilityPage() {
 
   const filteredEvents = useMemo(() => {
     return events.filter(event => {
-      if (selectedTeamId !== 'all' && event.teamId !== selectedTeamId) {
+      // Filter by team (only applies to team events/matches, not personal activities)
+      if (selectedTeamId !== 'all' && event.teamId && event.teamId !== selectedTeamId) {
+        return false
+      }
+      // Personal activities don't have teamId, so if filtering by team and it's a personal activity, exclude it
+      if (selectedTeamId !== 'all' && event.type === 'personal_activity') {
         return false
       }
       if (selectedEventType !== 'all') {
         if (selectedEventType === 'match') {
           // If filtering for matches, only show matches
           return event.type === 'match'
+        } else if (event.type === 'personal_activity') {
+          // For personal activities, filter by activity type if specified
+          // For now, show all personal activities when any event type is selected
+          // Could add activity type filtering later
+          return true
         } else {
           // If filtering for event types, only show events (not matches) with that type
           if (event.type === 'match') {
@@ -492,6 +520,14 @@ export default function BulkAvailabilityPage() {
     const inserts: any[] = []
     const errors: string[] = []
 
+    // Get user email for personal activities
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', user.id)
+      .single()
+    const userEmail = profileData?.email
+
     for (const eventId of selectedEvents) {
       const event = events.find(e => e.id === eventId)
       if (!event) {
@@ -499,7 +535,51 @@ export default function BulkAvailabilityPage() {
         continue
       }
 
-      const rosterMemberId = rosterMap.get(event.teamId)
+      // Handle personal activities differently (use event_attendees table)
+      if (event.type === 'personal_activity') {
+        // Check if attendee record exists
+        const { data: existingAttendee } = await supabase
+          .from('event_attendees')
+          .select('id')
+          .eq('personal_event_id', eventId)
+          .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
+          .maybeSingle()
+
+        if (existingAttendee) {
+          const { error: updateError } = await supabase
+            .from('event_attendees')
+            .update({ availability_status: bulkStatus })
+            .eq('id', existingAttendee.id)
+
+          if (updateError) {
+            errors.push(`${event.name}: ${updateError.message}`)
+          }
+        } else {
+          // Insert new attendee record
+          const insertData: any = {
+            personal_event_id: eventId,
+            availability_status: bulkStatus,
+          }
+          if (user.id) {
+            insertData.user_id = user.id
+          }
+          if (userEmail) {
+            insertData.email = userEmail
+          }
+
+          const { error: insertError } = await supabase
+            .from('event_attendees')
+            .insert(insertData)
+
+          if (insertError) {
+            errors.push(`${event.name}: ${insertError.message}`)
+          }
+        }
+        continue
+      }
+
+      // Handle team events/matches (use availability table)
+      const rosterMemberId = rosterMap.get(event.teamId!)
       if (!rosterMemberId) {
         errors.push(`No roster membership found for team ${event.teamId}`)
         continue
@@ -714,6 +794,18 @@ export default function BulkAvailabilityPage() {
                 </Select>
               </div>
             </div>
+
+            {/* Personal Activities Toggle */}
+            <div className="flex items-center space-x-2 pt-2 border-t">
+              <Checkbox
+                id="show-personal-activities"
+                checked={showPersonalActivities}
+                onCheckedChange={(checked) => setShowPersonalActivities(checked === true)}
+              />
+              <Label htmlFor="show-personal-activities" className="font-normal cursor-pointer">
+                Include Personal Activities
+              </Label>
+            </div>
           </CardContent>
         </Card>
 
@@ -838,9 +930,18 @@ export default function BulkAvailabilityPage() {
                   <div
                     key={event.id}
                     className={cn(
-                      'flex items-center gap-3 p-3 border rounded-lg hover:bg-accent/50 transition-colors',
+                      'flex items-center gap-3 p-3 border rounded-lg hover:bg-accent/50 transition-colors cursor-pointer',
                       selectedEvents.has(event.id) && 'bg-accent border-primary'
                     )}
+                    onClick={() => {
+                      if (event.type === 'personal_activity') {
+                        router.push(`/activities/${event.id}`)
+                      } else if (event.type === 'match') {
+                        router.push(`/teams/${event.teamId}/matches/${event.id}`)
+                      } else {
+                        router.push(`/teams/${event.teamId}/events/${event.id}`)
+                      }
+                    }}
                   >
                     <Checkbox
                       checked={selectedEvents.has(event.id)}
