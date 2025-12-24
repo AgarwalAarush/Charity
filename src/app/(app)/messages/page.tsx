@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { createClient } from '@/lib/supabase/client'
-import { Team, Profile } from '@/types/database.types'
+import { Team } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { Users, MessageCircle, ChevronRight, Mail, Check, X, ArrowLeft, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -31,7 +31,11 @@ interface TeamConversation extends Conversation {
 }
 
 interface DMConversation extends Conversation {
-  other_user?: Profile
+  other_user?: {
+    id: string
+    email: string
+    full_name?: string | null
+  }
   has_unread?: boolean
 }
 
@@ -45,7 +49,11 @@ interface TeamInvitation {
   message: string | null
   created_at: string
   team?: Team
-  inviter?: Profile
+  inviter?: {
+    id: string
+    email: string
+    full_name?: string | null
+  }
 }
 
 interface EventInvitation {
@@ -65,7 +73,11 @@ interface EventInvitation {
     date: string
     time: string
   }
-  inviter?: Profile
+  inviter?: {
+    id: string
+    email: string
+    full_name?: string | null
+  }
 }
 
 export default function MessagesPage() {
@@ -136,16 +148,17 @@ export default function MessagesPage() {
           .eq('id', user.id)
           .single()
         
-        const userEmail = profileData?.email
+        const userEmail = profileData?.email?.trim()
         
-        // Build query conditionally
+        // Build query conditionally - check if table exists first
         let eventInvitesQuery = supabase
           .from('event_invitations')
           .select('*, personal_events(*)')
           .eq('status', 'pending')
         
-        // Add invitee conditions - use OR only if we have an email
-        if (userEmail) {
+        // Add invitee conditions - use OR only if we have a valid email
+        if (userEmail && userEmail.length > 0) {
+          // Use OR to match by user ID or email
           eventInvitesQuery = eventInvitesQuery.or(`invitee_id.eq.${user.id},invitee_email.eq.${userEmail}`)
         } else {
           // If no email, only query by invitee_id
@@ -156,14 +169,26 @@ export default function MessagesPage() {
           .order('created_at', { ascending: false })
         
         if (eventInvitesError) {
-          console.error('Error loading event invitations:', {
-            message: eventInvitesError.message || 'Unknown error',
-            details: eventInvitesError.details || null,
-            hint: eventInvitesError.hint || null,
-            code: eventInvitesError.code || null,
-            error: eventInvitesError,
-          })
-          setEventInvitations([])
+          // Check if error is due to table not existing
+          const errorCode = eventInvitesError.code
+          const errorMessage = eventInvitesError.message || ''
+          const errorDetails = eventInvitesError.details || ''
+          
+          if (errorCode === '42P01' || errorMessage.includes('does not exist') || errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
+            console.warn('event_invitations table does not exist - migration may not have been run. Skipping event invitations.')
+            setEventInvitations([])
+          } else {
+            // Log full error details for debugging
+            console.error('Error loading event invitations:', {
+              message: errorMessage || 'Unknown error',
+              details: errorDetails,
+              hint: eventInvitesError.hint || null,
+              code: errorCode || null,
+              fullError: JSON.stringify(eventInvitesError, null, 2),
+              errorObject: eventInvitesError,
+            })
+            setEventInvitations([])
+          }
         } else {
           // Load inviter profiles separately if we have invitations
           if (eventInvites && eventInvites.length > 0) {
@@ -191,7 +216,11 @@ export default function MessagesPage() {
           setEventInvitations(eventInvitationsWithData)
         }
       } catch (err: any) {
-        console.error('Exception loading event invitations:', err)
+        console.error('Exception loading event invitations:', {
+          message: err?.message || 'Unknown exception',
+          stack: err?.stack,
+          error: err,
+        })
         setEventInvitations([])
       }
 
@@ -216,7 +245,7 @@ export default function MessagesPage() {
 
       const allTeams = [
         ...(captainTeams || []),
-        ...(memberTeams?.map(m => m.teams).filter(Boolean) as Team[] || [])
+        ...((memberTeams?.map(m => m.teams).filter(Boolean) || []) as unknown as Team[])
       ]
 
       // Remove duplicates

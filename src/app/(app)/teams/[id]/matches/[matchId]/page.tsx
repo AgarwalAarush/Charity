@@ -358,7 +358,7 @@ export default function MatchDetailPage() {
         
         if (avail.status === 'available') {
           availablePlayers.push(playerInfo)
-        } else if (avail.status === 'maybe' || avail.status === 'late') {
+        } else if (avail.status === 'maybe' || avail.status === 'last_resort') {
           maybePlayers.push(playerInfo)
         } else {
           unavailablePlayers.push(playerInfo)

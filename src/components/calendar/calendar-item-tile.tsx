@@ -29,8 +29,8 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
         return <X className="h-3 w-3 text-red-500" />
       case 'maybe':
         return <HelpCircle className="h-3 w-3 text-yellow-500" />
-      case 'late':
-        return <Clock className="h-3 w-3 text-orange-500" />
+      case 'last_resort':
+        return <HelpCircle className="h-3 w-3 text-purple-500" />
       default:
         return null
     }

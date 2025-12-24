@@ -82,8 +82,8 @@ function SortablePlayer({
         return 'border-l-red-500'
       case 'maybe':
         return 'border-l-yellow-500'
-      case 'late':
-        return 'border-l-orange-500'
+      case 'last_resort':
+        return 'border-l-purple-500'
       default:
         return 'border-l-gray-300'
     }
@@ -674,7 +674,7 @@ export default function LineupBuilderPage() {
               activePlayer.availability === 'available' && 'border-l-green-500',
               activePlayer.availability === 'unavailable' && 'border-l-red-500',
               activePlayer.availability === 'maybe' && 'border-l-yellow-500',
-              activePlayer.availability === 'late' && 'border-l-orange-500',
+              activePlayer.availability === 'last_resort' && 'border-l-purple-500',
               !activePlayer.availability && 'border-l-gray-300'
             )}
           >

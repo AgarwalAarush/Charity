@@ -315,7 +315,7 @@ export default function AvailabilityPage() {
       const itemId = item.id
       let available = 0
       
-      // Count only players with status = 'available' (not maybe, late, etc.)
+      // Count only players with status = 'available' (not maybe, last_resort, etc.)
       // This will be recalculated when rendering to include pending changes
       playerIds.forEach(playerId => {
         const avail = availability[playerId]?.[itemId]
@@ -366,7 +366,7 @@ export default function AvailabilityPage() {
   function updateAvailabilityLocal(
     playerId: string,
     itemId: string,
-    status: 'available' | 'unavailable' | 'maybe' | 'late' | 'last_resort'
+    status: 'available' | 'unavailable' | 'maybe' | 'last_resort'
   ) {
     try {
       if (!isCaptain) {
@@ -525,10 +525,24 @@ export default function AvailabilityPage() {
       // Process all pending changes
       for (const [playerId, itemChanges] of Object.entries(pendingChanges)) {
         for (const [itemId, status] of Object.entries(itemChanges)) {
+          // Validate playerId exists in roster
+          const player = data.players.find(p => p.id === playerId)
+          if (!player) {
+            console.error(`Player not found: ${playerId}`)
+            errors.push(`${playerId}-${itemId}: Player not found on roster`)
+            continue
+          }
+
           const existing = data.availability[playerId]?.[itemId]
           
           // Determine if this is a match or event
           const item = data.items.find(i => i.id === itemId)
+          if (!item) {
+            console.error(`Item not found: ${itemId}`)
+            errors.push(`${playerId}-${itemId}: Match/Event not found`)
+            continue
+          }
+          
           const isMatch = item?.type === 'match'
 
           try {
@@ -540,8 +554,15 @@ export default function AvailabilityPage() {
                 .eq('id', existing.id)
               
               if (error) {
-                console.error('Error updating availability:', error)
-                errors.push(`${playerId}-${itemId}: ${error.message}`)
+                console.error('Error updating availability:', {
+                  message: error.message || 'Unknown error',
+                  details: error.details || null,
+                  hint: error.hint || null,
+                  code: error.code || null,
+                  fullError: JSON.stringify(error, null, 2),
+                  errorObject: error,
+                })
+                errors.push(`${playerId}-${itemId}: ${error.message || 'Unknown error'}`)
               }
             } else {
               // Insert new availability record
@@ -561,8 +582,19 @@ export default function AvailabilityPage() {
                 .insert(insertData)
               
               if (error) {
-                console.error('Error inserting availability:', error)
-                errors.push(`${playerId}-${itemId}: ${error.message}`)
+                console.error('Error inserting availability:', {
+                  message: error.message || 'Unknown error',
+                  details: error.details || null,
+                  hint: error.hint || null,
+                  code: error.code || null,
+                  fullError: JSON.stringify(error, null, 2),
+                  errorObject: error,
+                  insertData: insertData,
+                  playerId: playerId,
+                  itemId: itemId,
+                  isMatch: isMatch,
+                })
+                errors.push(`${playerId}-${itemId}: ${error.message || 'Unknown error'}`)
               }
             }
           } catch (err) {
@@ -821,8 +853,8 @@ export default function AvailabilityPage() {
         return 'bg-red-100 hover:bg-red-200 text-red-700 border-red-300'
       case 'maybe':
         return 'bg-yellow-100 hover:bg-yellow-200 text-yellow-700 border-yellow-300'
-      case 'last_resort':
-        return 'bg-purple-100 hover:bg-purple-200 text-purple-700 border-purple-300'
+      case 'late':
+        return 'bg-orange-100 hover:bg-orange-200 text-orange-700 border-orange-300'
       default:
         return 'bg-gray-100 hover:bg-gray-200 text-gray-600 border-gray-300'
     }

@@ -23,7 +23,7 @@ export interface CalendarItem {
   teamColor?: string | null // Saved team color from database
   name: string // opponent name for match, event name for event, title for personal activity
   is_home?: boolean // Only for matches
-  availabilityStatus?: 'available' | 'unavailable' | 'maybe' | 'late'
+  availabilityStatus?: 'available' | 'unavailable' | 'maybe' | 'last_resort'
   eventType?: EventType // Only for team events
   activityType?: ActivityType // Only for personal activities
   creatorId?: string // Only for personal activities

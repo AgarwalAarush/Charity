@@ -134,7 +134,7 @@ export interface EventAttendee {
   user_id?: string | null
   email: string
   name?: string | null
-  availability_status: 'available' | 'unavailable' | 'maybe' | 'late'
+  availability_status: 'available' | 'unavailable' | 'maybe' | 'last_resort'
   invited_via?: string | null
   created_at?: string
   updated_at?: string
@@ -147,6 +147,35 @@ export type EventAttendeeInsert = Omit<EventAttendee, 'id' | 'created_at' | 'upd
 }
 
 export type EventAttendeeUpdate = Partial<Omit<EventAttendee, 'id' | 'created_at'>> & {
+  updated_at?: string
+}
+
+// Contact types
+export interface Contact {
+  id: string
+  user_id: string
+  linked_profile_id?: string | null
+  name: string
+  email?: string | null
+  phone?: string | null
+  address?: string | null
+  notes?: string | null
+  tags?: string[] | null
+  relationship_type?: 'teammate' | 'opponent' | 'coach' | 'facility_staff' | 'other' | null
+  source?: 'auto' | 'manual' | 'merged'
+  source_team_id?: string | null
+  source_roster_member_id?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export type ContactInsert = Omit<Contact, 'id' | 'created_at' | 'updated_at'> & {
+  id?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export type ContactUpdate = Partial<Omit<Contact, 'id' | 'created_at'>> & {
   updated_at?: string
 }
 

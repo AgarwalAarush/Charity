@@ -63,8 +63,8 @@ export function getAvailabilityColor(status: string): string {
       return 'bg-gray-400'
     case 'maybe':
       return 'bg-yellow-500'
-    case 'late':
-      return 'bg-orange-500'
+    case 'last_resort':
+      return 'bg-purple-500'
     default:
       return 'bg-gray-200'
   }

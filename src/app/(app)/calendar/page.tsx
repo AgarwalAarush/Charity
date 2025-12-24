@@ -470,7 +470,7 @@ export default function CalendarPage() {
           teamAvailability.forEach(avail => {
             if (avail.status === 'available') {
               available++
-            } else if (avail.status === 'maybe' || avail.status === 'late') {
+            } else if (avail.status === 'maybe' || avail.status === 'last_resort') {
               maybe++
             } else {
               unavailable++
