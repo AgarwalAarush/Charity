@@ -68,6 +68,8 @@ export function AddPersonalEventDialog({
   const [locationMode, setLocationMode] = useState<'venue' | 'custom'>('venue')
   const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([])
   const [availableActivityTypes, setAvailableActivityTypes] = useState<Array<{ value: ActivityType; label: string }>>(DEFAULT_ACTIVITY_TYPES)
+  const [venueCourtTimes, setVenueCourtTimes] = useState<Array<{ id: string; start_time: string }>>([])
+  const [useCourtTime, setUseCourtTime] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -77,6 +79,16 @@ export function AddPersonalEventDialog({
       resetForm()
     }
   }, [open])
+
+  // Load court times when venue is selected
+  useEffect(() => {
+    if (selectedVenueId && locationMode === 'venue') {
+      loadVenueCourtTimes(selectedVenueId)
+    } else {
+      setVenueCourtTimes([])
+      setUseCourtTime(false)
+    }
+  }, [selectedVenueId, locationMode])
 
   async function loadActivityTypes() {
     try {
@@ -111,6 +123,48 @@ export function AddPersonalEventDialog({
     }
   }
 
+  async function loadVenueCourtTimes(venueId: string) {
+    const supabase = createClient()
+    try {
+      const { data, error } = await supabase
+        .from('venue_court_times')
+        .select('id, start_time')
+        .eq('venue_id', venueId)
+        .order('display_order', { ascending: true })
+        .order('start_time', { ascending: true })
+
+      if (error) {
+        console.error('Error loading court times:', error)
+        setVenueCourtTimes([])
+      } else {
+        setVenueCourtTimes(data || [])
+      }
+    } catch (error) {
+      console.error('Error loading court times:', error)
+      setVenueCourtTimes([])
+    }
+  }
+
+  function formatTimeForDisplay(timeString: string): string {
+    // Convert TIME format (HH:MM:SS) to 12-hour format with AM/PM
+    try {
+      const [hours, minutes] = timeString.split(':')
+      const hour = parseInt(hours, 10)
+      const minute = parseInt(minutes, 10)
+      const date = new Date()
+      date.setHours(hour, minute, 0)
+      return format(date, 'h:mm a')
+    } catch {
+      return timeString
+    }
+  }
+
+  function formatTimeForInput(timeString: string): string {
+    // Convert TIME format (HH:MM:SS) to input format (HH:MM)
+    const [hours, minutes] = timeString.split(':')
+    return `${hours}:${minutes}`
+  }
+
 
   function resetForm() {
     setTitle('')
@@ -125,7 +179,8 @@ export function AddPersonalEventDialog({
     setSelectedTeamId('')
     setSelectedVenueId(undefined)
     setLocationMode('venue')
-    setSelectedVenueId(undefined)
+    setVenueCourtTimes([])
+    setUseCourtTime(false)
     setIsRecurring(false)
     setRecurrencePattern('weekly')
     setEndType('date')
@@ -389,13 +444,51 @@ export function AddPersonalEventDialog({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="time">Time *</Label>
-                  <Input
-                    id="time"
-                    type="time"
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    required
-                  />
+                  {/* Court Start Times Picker (if venue has court times) */}
+                  {venueCourtTimes.length > 0 && locationMode === 'venue' && (
+                    <Select
+                      value={useCourtTime && time ? time : 'custom'}
+                      onValueChange={(value) => {
+                        if (value === 'custom') {
+                          setUseCourtTime(false)
+                        } else {
+                          setUseCourtTime(true)
+                          // Find the selected court time
+                          const selectedCourtTime = venueCourtTimes.find(ct => formatTimeForInput(ct.start_time) === value)
+                          if (selectedCourtTime) {
+                            setTime(formatTimeForInput(selectedCourtTime.start_time))
+                          }
+                        }
+                      }}
+                    >
+                      <SelectTrigger id="time">
+                        <SelectValue placeholder="Select court start time or custom" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="custom">Custom Time</SelectItem>
+                        {venueCourtTimes.map((courtTime) => {
+                          const timeValue = formatTimeForInput(courtTime.start_time)
+                          return (
+                            <SelectItem key={courtTime.id} value={timeValue}>
+                              {formatTimeForDisplay(courtTime.start_time)}
+                            </SelectItem>
+                          )
+                        })}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {(!venueCourtTimes.length || locationMode === 'custom' || !useCourtTime) && (
+                    <Input
+                      id="time"
+                      type="time"
+                      value={time}
+                      onChange={(e) => {
+                        setTime(e.target.value)
+                        setUseCourtTime(false)
+                      }}
+                      required
+                    />
+                  )}
                 </div>
               </div>
 
@@ -432,6 +525,10 @@ export function AddPersonalEventDialog({
                 onVenueSelected={(venue) => {
                   if (venue) {
                     setLocation(venue.address ? `${venue.name} - ${venue.address}` : venue.name)
+                    // Set duration from venue's default court time if available
+                    if (venue.default_court_time) {
+                      setDuration(venue.default_court_time.toString())
+                    }
                   }
                 }}
               />

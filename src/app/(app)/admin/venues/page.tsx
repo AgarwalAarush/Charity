@@ -8,7 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
 import { useIsSystemAdmin } from '@/hooks/use-is-system-admin'
 import { VenueDialog } from '@/components/teams/venue-dialog'
-import { Plus, Edit, Trash2, MapPin, ExternalLink, Loader2 } from 'lucide-react'
+import { VenueCourtTimesDialog } from '@/components/admin/venue-court-times-dialog'
+import { Plus, Edit, Trash2, MapPin, ExternalLink, Loader2, Clock } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -38,6 +39,8 @@ export default function AdminVenuesPage() {
   const [loading, setLoading] = useState(true)
   const [showVenueDialog, setShowVenueDialog] = useState(false)
   const [editingVenue, setEditingVenue] = useState<Venue | null>(null)
+  const [showCourtTimesDialog, setShowCourtTimesDialog] = useState(false)
+  const [selectedVenueForCourtTimes, setSelectedVenueForCourtTimes] = useState<Venue | null>(null)
   const [filterRegion, setFilterRegion] = useState<string>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const { toast } = useToast()
@@ -259,6 +262,18 @@ export default function AdminVenuesPage() {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => {
+                          setSelectedVenueForCourtTimes(venue)
+                          setShowCourtTimesDialog(true)
+                        }}
+                        title="Manage court start times"
+                      >
+                        <Clock className="h-4 w-4 mr-2" />
+                        Court Times
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => handleToggleActive(venue.id, venue.is_active)}
                       >
                         {venue.is_active ? 'Deactivate' : 'Activate'}
@@ -295,6 +310,18 @@ export default function AdminVenuesPage() {
           teamId="" // Empty for system-level venues
           onSaved={loadVenues}
         />
+
+        {selectedVenueForCourtTimes && (
+          <VenueCourtTimesDialog
+            open={showCourtTimesDialog}
+            onOpenChange={setShowCourtTimesDialog}
+            venueId={selectedVenueForCourtTimes.id}
+            venueName={selectedVenueForCourtTimes.name}
+            onSaved={() => {
+              // Optionally reload venues if needed
+            }}
+          />
+        )}
       </main>
     </div>
   )
