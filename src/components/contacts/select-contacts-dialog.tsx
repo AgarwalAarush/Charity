@@ -108,8 +108,16 @@ export function SelectContactsDialog({
   }
 
   const groupedContacts = useMemo(() => {
+    // Group contacts by the primary team (first team in the list)
     return potentialContacts.reduce((acc, contact) => {
-      const teamName = contact.team_name || 'No Team'
+      let teamName = contact.team_name || 'No Team'
+      
+      // If team name is aggregated (contains "teams)"), extract just the first team name
+      if (teamName.includes('(') && teamName.includes('teams)')) {
+        // Get the part before the comma (first team)
+        teamName = teamName.split(',')[0].trim()
+      }
+      
       if (!acc[teamName]) {
         acc[teamName] = []
       }
@@ -287,6 +295,11 @@ export function SelectContactsDialog({
                                 <div className="flex flex-wrap gap-3 mt-1 text-sm text-muted-foreground">
                                   {contact.email && <span>{contact.email}</span>}
                                   {contact.phone && <span>{contact.phone}</span>}
+                                  {contact.team_name && contact.team_name.includes('(') && contact.team_name.includes('teams)') && (
+                                    <Badge variant="outline" className="text-xs">
+                                      {contact.team_name}
+                                    </Badge>
+                                  )}
                                 </div>
                               </div>
                             </div>

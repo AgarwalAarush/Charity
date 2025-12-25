@@ -12,7 +12,17 @@ import { PersonalEvent, EventAttendee, EventInvitation, Profile } from '@/types/
 import { formatDate, formatTime, calculateEndTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
+import { getActivityTypes } from '@/lib/event-type-colors'
+import { ActivityType } from '@/lib/calendar-utils'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { EventInvitationDialog } from '@/components/activities/event-invitation-dialog'
+import { EmailService } from '@/services/EmailService'
 import {
   Calendar,
   Clock,
@@ -38,13 +48,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -67,6 +70,10 @@ export default function PersonalEventDetailPage() {
   const [attendees, setAttendees] = useState<EventAttendee[]>([])
   const [invitations, setInvitations] = useState<EventInvitation[]>([])
   const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [removingAttendeeId, setRemovingAttendeeId] = useState<string | null>(null)
+  const [removingInvitationId, setRemovingInvitationId] = useState<string | null>(null)
+  const [isRecurring, setIsRecurring] = useState(false)
+  const [initialEditScope, setInitialEditScope] = useState<'series' | 'single'>('single')
   const { toast } = useToast()
 
   useEffect(() => {
@@ -103,6 +110,11 @@ export default function PersonalEventDetailPage() {
 
       setEvent(eventData)
       setIsCreator(eventData.creator_id === user.id)
+      
+      // Check if this is a recurring event
+      const hasRecurrence = !!eventData.recurrence_series_id
+      setIsRecurring(hasRecurrence)
+      
       setEditedEvent({
         title: eventData.title,
         date: eventData.date,
@@ -194,29 +206,100 @@ export default function PersonalEventDetailPage() {
 
     setSaving(true)
     const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
 
-    const { error } = await supabase
-      .from('personal_events')
-      .update({
-        ...editedEvent,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', eventId)
-
-    if (error) {
-      toast({
-        title: 'Error',
-        description: error.message,
-        variant: 'destructive',
-      })
+    if (!user) {
       setSaving(false)
       return
     }
 
-    toast({
-      title: 'Activity updated',
-      description: 'Your changes have been saved',
-    })
+    if (isRecurring && initialEditScope === 'series') {
+      // Edit entire series - update all events in the series
+      const seriesId = event.recurrence_series_id
+      
+      if (!seriesId) {
+        toast({
+          title: 'Error',
+          description: 'Unable to find recurring series',
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+
+      // Get all events in the series
+      const { data: seriesEvents } = await supabase
+        .from('personal_events')
+        .select('id, date')
+        .eq('recurrence_series_id', seriesId)
+        .order('date', { ascending: true })
+
+      if (!seriesEvents || seriesEvents.length === 0) {
+        toast({
+          title: 'Error',
+          description: 'No events found in series',
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+
+      // Update all events in the series
+      const { error } = await supabase
+        .from('personal_events')
+        .update({
+          title: editedEvent.title,
+          time: editedEvent.time,
+          duration: editedEvent.duration,
+          location: editedEvent.location,
+          description: editedEvent.description,
+          activity_type: editedEvent.activity_type,
+          max_attendees: editedEvent.max_attendees,
+          cost: editedEvent.cost,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('recurrence_series_id', seriesId)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+
+      toast({
+        title: 'Series updated',
+        description: `Updated ${seriesEvents.length} event${seriesEvents.length > 1 ? 's' : ''} in the series`,
+      })
+    } else {
+      // Edit single event only
+      const { error } = await supabase
+        .from('personal_events')
+        .update({
+          ...editedEvent,
+          activity_type: editedEvent.activity_type || 'other',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', eventId)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+
+      toast({
+        title: 'Activity updated',
+        description: 'Your changes have been saved',
+      })
+    }
 
     setIsEditing(false)
     loadEventData()
@@ -247,6 +330,303 @@ export default function PersonalEventDetailPage() {
     })
 
     router.push('/activities')
+  }
+
+  async function removeAttendee(attendeeId: string) {
+    if (!event) return
+
+    setRemovingAttendeeId(attendeeId)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      setRemovingAttendeeId(null)
+      return
+    }
+
+    // Get attendee details before deleting
+    const { data: attendee } = await supabase
+      .from('event_attendees')
+      .select('*, profiles(id, full_name, email)')
+      .eq('id', attendeeId)
+      .single()
+
+    if (!attendee) {
+      setRemovingAttendeeId(null)
+      return
+    }
+
+    // Get creator's name for email
+    const { data: creatorProfile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', event.creator_id)
+      .single()
+
+    const creatorName = creatorProfile?.full_name || 'The event organizer'
+
+    // Delete the attendee record
+    const { error } = await supabase
+      .from('event_attendees')
+      .delete()
+      .eq('id', attendeeId)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+      setRemovingAttendeeId(null)
+      return
+    }
+
+    // Send cancellation email
+    const attendeeEmail = attendee.email || (attendee as any).profiles?.email
+    const attendeeName = attendee.name || (attendee as any).profiles?.full_name
+
+    if (attendeeEmail) {
+      const emailData = EmailService.compileEventCanceledEmail({
+        eventName: event.title,
+        eventDate: event.date,
+        eventTime: event.time,
+        eventLocation: event.location,
+        inviterName: creatorName,
+        inviteeName: attendeeName || undefined,
+        isPersonalEvent: true,
+      })
+
+      emailData.to = attendeeEmail
+
+      const emailResult = await EmailService.send(emailData)
+      if (!emailResult.success) {
+        console.error('Failed to send cancellation email:', emailResult.error)
+      }
+    }
+
+    toast({
+      title: 'Attendee removed',
+      description: `${attendeeName || attendeeEmail} has been removed from the activity and notified via email.`,
+    })
+
+    // Reload event data to refresh the UI
+    await loadEventData()
+    setRemovingAttendeeId(null)
+  }
+
+  async function removeInvitation(invitationId: string) {
+    if (!event) return
+
+    setRemovingInvitationId(invitationId)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      setRemovingInvitationId(null)
+      return
+    }
+
+    // Get invitation details before deleting
+    const { data: invitation, error: fetchError } = await supabase
+      .from('event_invitations')
+      .select('*')
+      .eq('id', invitationId)
+      .single()
+
+    if (fetchError) {
+      console.error('Error fetching invitation:', fetchError)
+      toast({
+        title: 'Error',
+        description: 'Failed to load invitation details',
+        variant: 'destructive',
+      })
+      setRemovingInvitationId(null)
+      return
+    }
+
+    if (!invitation) {
+      console.warn('Invitation not found:', invitationId)
+      // Update UI anyway in case it's a stale reference
+      setInvitations(prev => prev.filter(inv => inv.id !== invitationId))
+      setRemovingInvitationId(null)
+      return
+    }
+
+    console.log('Removing invitation:', invitation)
+
+    // Get creator's name for email
+    const { data: creatorProfile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', event.creator_id)
+      .single()
+
+    const creatorName = creatorProfile?.full_name || 'The event organizer'
+
+    // If invitation was accepted, also remove the attendee record
+    if (invitation.status === 'accepted') {
+      // Find and delete the corresponding attendee record
+      let attendeeDeleteQuery = supabase
+        .from('event_attendees')
+        .delete()
+        .eq('personal_event_id', eventId)
+
+      // Match by user_id if available, otherwise by email
+      if (invitation.invitee_id) {
+        attendeeDeleteQuery = attendeeDeleteQuery.eq('user_id', invitation.invitee_id)
+      } else {
+        attendeeDeleteQuery = attendeeDeleteQuery.eq('email', invitation.invitee_email)
+      }
+
+      const { error: attendeeError } = await attendeeDeleteQuery
+
+      if (attendeeError) {
+        console.error('Error removing attendee record:', attendeeError)
+        // Continue anyway - we'll still remove the invitation
+      }
+    }
+
+    // Check if this is a recurring event - if so, we might want to delete from all events
+    // For now, just delete this specific invitation
+    // TODO: Could add option to delete from all events in series
+    
+    // Delete the invitation record
+    console.log('Attempting to delete invitation with ID:', invitationId)
+    const { data: deletedData, error } = await supabase
+      .from('event_invitations')
+      .delete()
+      .eq('id', invitationId)
+      .select()
+
+    if (error) {
+      console.error('Error deleting invitation:', error)
+      console.error('Error details:', JSON.stringify(error, null, 2))
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to delete invitation. Check console for details.',
+        variant: 'destructive',
+      })
+      setRemovingInvitationId(null)
+      return
+    }
+
+    // Verify deletion was successful
+    if (!deletedData || deletedData.length === 0) {
+      console.warn('No invitation was deleted - checking if it still exists...')
+      // Check if invitation still exists
+      const { data: stillExists, error: checkError } = await supabase
+        .from('event_invitations')
+        .select('id, event_id, invitee_email, status')
+        .eq('id', invitationId)
+        .single()
+      
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = not found
+        console.error('Error checking if invitation exists:', checkError)
+      }
+      
+      if (stillExists) {
+        console.error('Invitation still exists after delete attempt:', stillExists)
+        toast({
+          title: 'Error',
+          description: 'Invitation could not be deleted. You may not have permission to delete this invitation.',
+          variant: 'destructive',
+        })
+        setRemovingInvitationId(null)
+        return
+      } else {
+        console.log('Invitation was already deleted or does not exist')
+      }
+    } else {
+      console.log('Successfully deleted invitation:', deletedData)
+    }
+
+    // Send cancellation email (only if invitation was pending or accepted)
+    if (invitation.status === 'pending' || invitation.status === 'accepted') {
+      const emailData = EmailService.compileEventCanceledEmail({
+        eventName: event.title,
+        eventDate: event.date,
+        eventTime: event.time,
+        eventLocation: event.location,
+        inviterName: creatorName,
+        inviteeName: invitation.invitee_name || undefined,
+        isPersonalEvent: true,
+      })
+
+      emailData.to = invitation.invitee_email
+
+      const emailResult = await EmailService.send(emailData)
+      if (!emailResult.success) {
+        console.error('Failed to send cancellation email:', emailResult.error)
+      }
+    }
+
+    toast({
+      title: 'Invitation removed',
+      description: `${invitation.invitee_name || invitation.invitee_email} has been removed and notified via email.`,
+    })
+
+    // If deletion returned data, it was successful
+    const deletionSuccessful = deletedData && deletedData.length > 0
+
+    // Verify the invitation was actually deleted
+    if (!deletionSuccessful) {
+      // Double-check if it still exists
+      const { data: verifyDeleted, error: verifyError } = await supabase
+        .from('event_invitations')
+        .select('id')
+        .eq('id', invitationId)
+        .maybeSingle()
+
+      if (verifyDeleted) {
+        // Invitation still exists - deletion failed
+        console.error('Invitation still exists after delete - deletion may have failed due to permissions')
+        toast({
+          title: 'Error',
+          description: 'Invitation could not be deleted. Please check your permissions or try refreshing the page.',
+          variant: 'destructive',
+        })
+        setRemovingInvitationId(null)
+        return
+      }
+      // If verifyDeleted is null, the invitation doesn't exist (was already deleted or never existed)
+      console.log('Invitation does not exist (may have been already deleted)')
+    }
+
+    // Invitation was successfully deleted (or doesn't exist) - update UI immediately
+    console.log('Updating UI - removing invitation:', invitationId)
+    setInvitations(prev => {
+      const beforeCount = prev.length
+      const filtered = prev.filter(inv => inv.id !== invitationId)
+      const afterCount = filtered.length
+      console.log(`Invitations: ${beforeCount} -> ${afterCount} (removed ${beforeCount - afterCount})`)
+      
+      if (beforeCount === afterCount) {
+        console.warn('No invitation was removed from state - invitation ID may not match')
+      }
+      
+      return filtered
+    })
+
+    // Reload invitations list after a short delay to ensure database is updated
+    setTimeout(async () => {
+      try {
+        const { data: refreshedInvitations } = await supabase
+          .from('event_invitations')
+          .select('*')
+          .eq('event_id', eventId)
+          .order('created_at', { ascending: false })
+
+        if (refreshedInvitations) {
+          console.log('Refreshed invitations count:', refreshedInvitations.length)
+          // Update with fresh data
+          setInvitations(refreshedInvitations)
+        }
+      } catch (error) {
+        console.error('Error reloading invitations:', error)
+      }
+    }, 500) // Small delay to ensure database has processed the deletion
+    
+    setRemovingInvitationId(null)
   }
 
   const getInitials = (name?: string) => {
@@ -301,14 +681,41 @@ export default function PersonalEventDetailPage() {
                     <UserPlus className="h-4 w-4 mr-2" />
                     Invite
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsEditing(true)}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Edit
-                  </Button>
+                  {isRecurring ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setInitialEditScope('single')
+                          setIsEditing(true)
+                        }}
+                      >
+                        <Edit className="h-4 w-4 mr-2" />
+                        Edit This Occurrence
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setInitialEditScope('series')
+                          setIsEditing(true)
+                        }}
+                      >
+                        <Edit className="h-4 w-4 mr-2" />
+                        Edit Series
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditing(true)}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit
+                    </Button>
+                  )}
                   <Button
                     variant="destructive"
                     size="sm"
@@ -379,6 +786,25 @@ export default function PersonalEventDetailPage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="edit-activity-type">Activity Type *</Label>
+                <Select
+                  value={editedEvent.activity_type || 'other'}
+                  onValueChange={(value) => setEditedEvent({ ...editedEvent, activity_type: value as ActivityType })}
+                >
+                  <SelectTrigger id="edit-activity-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getActivityTypes().map((type) => (
+                      <SelectItem key={type.value} value={type.value}>
+                        {type.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-date">Date *</Label>
@@ -388,6 +814,7 @@ export default function PersonalEventDetailPage() {
                     value={editedEvent.date || ''}
                     onChange={(e) => setEditedEvent({ ...editedEvent, date: e.target.value })}
                     required
+                    disabled={isRecurring && initialEditScope === 'series'}
                   />
                 </div>
                 <div className="space-y-2">
@@ -582,6 +1009,21 @@ export default function PersonalEventDetailPage() {
                                 <div className="text-xs text-muted-foreground">{attendee.email}</div>
                               )}
                             </div>
+                            {isCreator && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeAttendee(attendee.id)}
+                                disabled={removingAttendeeId === attendee.id}
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                              >
+                                {removingAttendeeId === attendee.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -611,6 +1053,21 @@ export default function PersonalEventDetailPage() {
                                 <div className="text-xs text-muted-foreground">{attendee.email}</div>
                               )}
                             </div>
+                            {isCreator && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeAttendee(attendee.id)}
+                                disabled={removingAttendeeId === attendee.id}
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                              >
+                                {removingAttendeeId === attendee.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -640,6 +1097,21 @@ export default function PersonalEventDetailPage() {
                                 <div className="text-xs text-muted-foreground">{attendee.email}</div>
                               )}
                             </div>
+                            {isCreator && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeAttendee(attendee.id)}
+                                disabled={removingAttendeeId === attendee.id}
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                              >
+                                {removingAttendeeId === attendee.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -665,7 +1137,7 @@ export default function PersonalEventDetailPage() {
                   <div className="space-y-2">
                     {invitations.map((invitation) => (
                       <div key={invitation.id} className="flex items-center justify-between p-2 border rounded">
-                        <div>
+                        <div className="flex-1">
                           <div className="text-sm font-medium">
                             {invitation.invitee_name || invitation.invitee_email}
                           </div>
@@ -673,13 +1145,28 @@ export default function PersonalEventDetailPage() {
                             <div className="text-xs text-muted-foreground">{invitation.invitee_email}</div>
                           )}
                         </div>
-                        <Badge variant={
-                          invitation.status === 'accepted' ? 'default' :
-                          invitation.status === 'declined' ? 'destructive' :
-                          'secondary'
-                        }>
-                          {invitation.status}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={
+                            invitation.status === 'accepted' ? 'default' :
+                            invitation.status === 'declined' ? 'destructive' :
+                            'secondary'
+                          }>
+                            {invitation.status}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeInvitation(invitation.id)}
+                            disabled={removingInvitationId === invitation.id}
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                          >
+                            {removingInvitationId === invitation.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -722,5 +1209,6 @@ export default function PersonalEventDetailPage() {
     </div>
   )
 }
+
 
 

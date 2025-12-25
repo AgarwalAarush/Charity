@@ -86,11 +86,26 @@ export default function SignUpPage() {
 
         const linkData = await linkResponse.json()
         
-        if (linkData.success && linkData.linked > 0) {
-          toast({
-            title: 'Account created!',
-            description: `Welcome! You've been automatically added to ${linkData.linked} team(s).`,
-          })
+        if (linkData.success) {
+          const messages = []
+          if (linkData.linked > 0) {
+            messages.push(`added to ${linkData.linked} team(s)`)
+          }
+          if (linkData.linkedInvitations > 0) {
+            messages.push(`${linkData.linkedInvitations} event invitation(s)`)
+          }
+          
+          if (messages.length > 0) {
+            toast({
+              title: 'Account created!',
+              description: `Welcome! You've been automatically ${messages.join(' and ')}.`,
+            })
+          } else {
+            toast({
+              title: 'Account created!',
+              description: 'Welcome to TennisLife',
+            })
+          }
         } else {
           toast({
             title: 'Account created!',

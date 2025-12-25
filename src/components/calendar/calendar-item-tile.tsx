@@ -3,12 +3,13 @@
 import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { CalendarItem } from '@/lib/calendar-utils'
-import { getTeamColorClass } from '@/lib/team-colors'
+import { getTeamColorClass, getPersonalActivityColorClass } from '@/lib/team-colors'
 import { getEventTypeBadgeClass, getEventTypeLabel } from '@/lib/event-type-colors'
 import { formatTime, formatDate, calculateEndTime } from '@/lib/utils'
 import { Check, X, HelpCircle, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { EventTypeBadge } from '@/components/events/event-type-badge'
+import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
 
 interface CalendarItemTileProps {
   item: CalendarItem
@@ -46,15 +47,36 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
     }
   }
 
+  // Use distinct color for personal activities, team colors for matches/events
+  const isPersonalActivity = item.type === 'personal_activity'
+  const borderColorClass = isPersonalActivity 
+    ? getPersonalActivityColorClass('border')
+    : getTeamColorClass(item.teamId, 'border', item.teamColor)
+  const bgColorClass = isPersonalActivity
+    ? getPersonalActivityColorClass('bgLight')
+    : getTeamColorClass(item.teamId, 'bgLight', item.teamColor)
+
+  // Use inline styles for personal activities to ensure dark red color is applied
+  const borderStyle = isPersonalActivity 
+    ? { borderLeftColor: '#991b1b' } // red-800
+    : undefined
+  const bgStyle = isPersonalActivity
+    ? { backgroundColor: '#fef2f2' } // red-50
+    : undefined
+
   return (
     <div
       onClick={handleClick}
       className={cn(
         'rounded-md cursor-pointer transition-colors hover:opacity-80 border-l-4',
-        getTeamColorClass(item.teamId, 'border', item.teamColor),
-        getTeamColorClass(item.teamId, 'bgLight', item.teamColor),
+        borderColorClass,
+        bgColorClass,
         compact ? 'p-1.5' : 'p-2'
       )}
+      style={{
+        ...borderStyle,
+        ...bgStyle,
+      }}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -74,7 +96,7 @@ export function CalendarItemTile({ item, compact = false, showDate = false }: Ca
               </Badge>
             ) : item.type === 'personal_activity' && item.activityType ? (
               <ActivityTypeBadge activityType={item.activityType} />
-            ) : item.eventType ? (
+            ) : item.type === 'event' ? (
               <EventTypeBadge eventType={item.eventType} />
             ) : null}
             {getAvailabilityIcon()}

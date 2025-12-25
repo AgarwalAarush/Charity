@@ -137,6 +137,7 @@ export default function HomePage() {
       }
 
       // User has no roster memberships, try to link via API
+      // This will link both roster members AND event invitations
       const response = await fetch('/api/auth/link-roster-members', {
         method: 'POST',
         headers: {
@@ -146,8 +147,8 @@ export default function HomePage() {
 
       const data = await response.json()
       
-      if (data.success && data.linked > 0) {
-        // Refresh the page to show the new teams
+      if (data.success && (data.linked > 0 || data.linkedInvitations > 0)) {
+        // Refresh the page to show the new teams and events
         window.location.reload()
       }
     } catch (error) {

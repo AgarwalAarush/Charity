@@ -45,21 +45,10 @@ interface TeamInfo {
 export default function CalendarPage() {
   const router = useRouter()
   const [currentDate, setCurrentDate] = useState(new Date())
-  // Load saved preferences or use defaults
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('calendar-view-mode')
-      return (saved as ViewMode) || 'week'
-    }
-    return 'week'
-  })
-  const [numWeeks, setNumWeeks] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('calendar-num-weeks')
-      return saved ? parseInt(saved, 10) : 3
-    }
-    return 3
-  })
+  // Initialize with default values to avoid hydration mismatch
+  // Load from localStorage in useEffect after mount
+  const [viewMode, setViewMode] = useState<ViewMode>('week')
+  const [numWeeks, setNumWeeks] = useState(3)
   const [calendarItems, setCalendarItems] = useState<CalendarItem[]>([])
   const [teams, setTeams] = useState<TeamInfo[]>([])
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
@@ -73,6 +62,22 @@ export default function CalendarPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [bulkStatus, setBulkStatus] = useState<'available' | 'maybe' | 'unavailable'>('available')
   const { toast } = useToast()
+
+  // Load saved preferences from localStorage after mount (client-side only)
+  // This prevents hydration mismatch between server and client
+  useEffect(() => {
+    const savedViewMode = localStorage.getItem('calendar-view-mode')
+    if (savedViewMode && ['week', 'month', 'list'].includes(savedViewMode)) {
+      setViewMode(savedViewMode as ViewMode)
+    }
+    const savedNumWeeks = localStorage.getItem('calendar-num-weeks')
+    if (savedNumWeeks) {
+      const parsed = parseInt(savedNumWeeks, 10)
+      if (!isNaN(parsed) && parsed > 0) {
+        setNumWeeks(parsed)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     loadTeams()
@@ -239,7 +244,7 @@ export default function CalendarPage() {
               teamName: team?.name || 'Unknown',
               teamColor: team?.color || null,
               name: event.event_name,
-              eventType: event.event_type || undefined,
+              eventType: (event.event_type || 'other') as any,
             })
           }
         })

@@ -307,12 +307,15 @@ export default function ContactDetailPage() {
 
       if (contact.linked_profile_id) {
         // Contact has an account - find by user_id
-        contactRosterQuery = contactRosterQuery.eq('user_id', contact.linked_profile_id)
+        contactRosterQuery = contactRosterQuery
+          .eq('user_id', contact.linked_profile_id)
+          .eq('is_active', true)
       } else if (contact.email) {
         // Contact doesn't have account - find by email
         contactRosterQuery = contactRosterQuery
           .eq('email', contact.email.toLowerCase())
           .is('user_id', null)
+          .eq('is_active', true)
       } else {
         // No way to identify contact
         setSharedTeams([])
@@ -328,7 +331,7 @@ export default function ContactDetailPage() {
         return
       }
 
-      // Get user's roster memberships
+      // Get user's roster memberships (only active)
       const { data: userRosters, error: userError } = await supabase
         .from('roster_members')
         .select(`
@@ -342,6 +345,7 @@ export default function ContactDetailPage() {
           )
         `)
         .eq('user_id', user.id)
+        .eq('is_active', true)
 
       if (userError) {
         console.error('Error loading user rosters:', userError)
@@ -428,6 +432,13 @@ export default function ContactDetailPage() {
       <Header title={contact.name} />
       
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
         {/* Contact Header Card */}
         <Card>
           <CardContent className="pt-6">

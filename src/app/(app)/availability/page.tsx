@@ -950,12 +950,12 @@ export default function BulkAvailabilityPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-medium text-sm truncate">{event.name}</span>
-                        {event.type === 'event' && event.eventType && (
+                        {event.type === 'event' && (
                           <Badge
                             variant="secondary"
-                            className={cn('text-xs', getEventTypeBadgeClass(event.eventType as any))}
+                            className={cn('text-xs', getEventTypeBadgeClass((event.eventType || 'other') as any))}
                           >
-                            {getEventTypeLabel(event.eventType as any)}
+                            {getEventTypeLabel((event.eventType || 'other') as any)}
                           </Badge>
                         )}
                         {event.type === 'match' && (

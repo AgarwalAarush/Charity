@@ -30,15 +30,38 @@ export function ActivityTypeBadge({
   
   const label = getActivityTypeLabel(normalizedType)
   const badgeClasses = getActivityTypeBadgeClass(normalizedType)
+  
+  // Get the background color for inline style to ensure it overrides
+  const getBackgroundColor = () => {
+    switch (normalizedType) {
+      case 'scrimmage':
+        return 'rgb(22, 163, 74)' // green-600
+      case 'lesson':
+        return 'rgb(79, 70, 229)' // indigo-600
+      case 'class':
+        return 'rgb(13, 148, 136)' // teal-600
+      case 'flex_league':
+        return 'rgb(217, 119, 6)' // amber-600
+      case 'other':
+      default:
+        return 'rgb(75, 85, 99)' // gray-600
+    }
+  }
 
   return (
     <Badge 
-      variant="default" 
-      className={cn("text-[10px] px-1 py-0 h-4", badgeClasses, className)}
+      variant="outline" 
+      className={cn("text-[10px] px-1 py-0 h-4 !text-white border-0", badgeClasses, className)}
+      style={{ 
+        backgroundColor: getBackgroundColor(),
+        color: 'white',
+        opacity: 1
+      }}
     >
       {label}
     </Badge>
   )
 }
+
 
 

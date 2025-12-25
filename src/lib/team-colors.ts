@@ -20,7 +20,11 @@ const TEAM_COLORS = [
 /**
  * Simple hash function to convert team ID to a number
  */
-function hashCode(str: string): number {
+function hashCode(str: string | undefined | null): number {
+  if (!str) {
+    // Return a default hash for undefined/null team IDs
+    return 0
+  }
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i)
@@ -34,11 +38,16 @@ function hashCode(str: string): number {
  * Get team color object based on team ID
  * If a savedColor is provided, use that; otherwise fall back to hash-based assignment
  */
-export function getTeamColor(teamId: string, savedColor?: string | null) {
+export function getTeamColor(teamId: string | undefined | null, savedColor?: string | null) {
   // If team has a saved color, use it
   if (savedColor) {
     const color = TEAM_COLORS.find(c => c.name === savedColor)
     if (color) return color
+  }
+  
+  // If no teamId, return a default color
+  if (!teamId) {
+    return TEAM_COLORS[0] // Default to first color (blue)
   }
   
   // Fall back to hash-based assignment
@@ -49,11 +58,11 @@ export function getTeamColor(teamId: string, savedColor?: string | null) {
 
 /**
  * Get Tailwind CSS class for team color background
- * @param teamId - The team ID
+ * @param teamId - The team ID (optional, for personal activities without a team)
  * @param type - The type of color class to return
  * @param savedColor - Optional saved color name from database
  */
-export function getTeamColorClass(teamId: string, type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg', savedColor?: string | null): string {
+export function getTeamColorClass(teamId: string | undefined | null, type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg', savedColor?: string | null): string {
   const color = getTeamColor(teamId, savedColor)
   
   switch (type) {
@@ -73,14 +82,14 @@ export function getTeamColorClass(teamId: string, type: 'bg' | 'border' | 'text'
 /**
  * Get hex color value for team
  */
-export function getTeamColorHex(teamId: string): string {
+export function getTeamColorHex(teamId: string | undefined | null): string {
   return getTeamColor(teamId).hex
 }
 
 /**
  * Get color name for team
  */
-export function getTeamColorName(teamId: string): string {
+export function getTeamColorName(teamId: string | undefined | null): string {
   return getTeamColor(teamId).name
 }
 
@@ -89,5 +98,24 @@ export function getTeamColorName(teamId: string): string {
  */
 export function getAllTeamColors() {
   return TEAM_COLORS
+}
+
+/**
+ * Get color classes for personal activities (distinct from team colors)
+ * Personal activities use dark brick red to differentiate from team events
+ */
+export function getPersonalActivityColorClass(type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg'): string {
+  switch (type) {
+    case 'bg':
+      return 'bg-red-800'
+    case 'bgLight':
+      return 'bg-red-50'
+    case 'border':
+      return 'border-l-red-800'
+    case 'text':
+      return 'text-red-800'
+    default:
+      return 'bg-red-800'
+  }
 }
 

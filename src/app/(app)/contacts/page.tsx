@@ -12,7 +12,7 @@ import { Contact } from '@/types/database.types'
 import { AddEditContactDialog } from '@/components/contacts/add-edit-contact-dialog'
 import { SelectContactsDialog } from '@/components/contacts/select-contacts-dialog'
 import { useToast } from '@/hooks/use-toast'
-import { Loader2, Plus, Search, Users, RefreshCw, Trash2, Eye } from 'lucide-react'
+import { Loader2, Plus, Search, Users, RefreshCw, Trash2, Edit, ArrowLeft } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,6 +61,122 @@ export default function ContactsPage() {
         .select('*')
         .eq('user_id', user.id)
         .order('name', { ascending: true })
+      
+      // For contacts on multiple teams, we need to get all teams where both user and contact are roster members
+      // This handles both contacts with linked_profile_id and contacts with just email
+      if (data) {
+        // Get user's active team IDs
+        const { data: userRosters } = await supabase
+          .from('roster_members')
+          .select('team_id')
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+        
+        const userTeamIds = userRosters?.map(r => r.team_id) || []
+        
+        // Get source team names for contacts that have source_team_id
+        const contactsWithSourceTeam = data.filter(c => c.source_team_id)
+        if (contactsWithSourceTeam.length > 0) {
+          const sourceTeamIds = contactsWithSourceTeam.map(c => c.source_team_id).filter(Boolean) as string[]
+          const { data: sourceTeams } = await supabase
+            .from('teams')
+            .select('id, name')
+            .in('id', sourceTeamIds)
+          
+          const sourceTeamMap = new Map<string, string>()
+          sourceTeams?.forEach(team => {
+            sourceTeamMap.set(team.id, team.name)
+          })
+          
+          data.forEach(contact => {
+            if (contact.source_team_id && sourceTeamMap.has(contact.source_team_id)) {
+              ;(contact as any).source_team = { name: sourceTeamMap.get(contact.source_team_id) }
+            }
+          })
+        }
+        
+        if (userTeamIds.length > 0) {
+          const contactsWithProfile = data.filter(c => c.linked_profile_id && c.relationship_type === 'teammate')
+          const contactsWithEmail = data.filter(c => !c.linked_profile_id && c.email && c.relationship_type === 'teammate')
+          
+          // Get teams for contacts with linked profiles where both are on the same team
+          if (contactsWithProfile.length > 0) {
+            const profileIds = contactsWithProfile.map(c => c.linked_profile_id).filter(Boolean) as string[]
+            
+            const { data: rosterData } = await supabase
+              .from('roster_members')
+              .select(`
+                user_id,
+                team_id,
+                teams!inner(id, name)
+              `)
+              .in('user_id', profileIds)
+              .in('team_id', userTeamIds)
+              .eq('is_active', true)
+            
+            const teamsMap = new Map<string, string[]>()
+            rosterData?.forEach(rm => {
+              const teamName = (rm.teams as any)?.name
+              if (teamName) {
+                if (!teamsMap.has(rm.user_id)) {
+                  teamsMap.set(rm.user_id, [])
+                }
+                if (!teamsMap.get(rm.user_id)!.includes(teamName)) {
+                  teamsMap.get(rm.user_id)!.push(teamName)
+                }
+              }
+            })
+            
+            data.forEach(contact => {
+              if (contact.linked_profile_id && teamsMap.has(contact.linked_profile_id)) {
+                const teamNames = teamsMap.get(contact.linked_profile_id)!
+                ;(contact as any).all_team_names = teamNames
+              }
+            })
+          }
+          
+          // Get teams for contacts with email but no linked profile where both are on the same team
+          if (contactsWithEmail.length > 0) {
+            const emails = contactsWithEmail.map(c => c.email?.toLowerCase()).filter(Boolean) as string[]
+            
+            const { data: emailRosterData } = await supabase
+              .from('roster_members')
+              .select(`
+                email,
+                team_id,
+                teams!inner(id, name)
+              `)
+              .in('email', emails)
+              .in('team_id', userTeamIds)
+              .is('user_id', null)
+              .eq('is_active', true)
+            
+            const emailTeamsMap = new Map<string, string[]>()
+            emailRosterData?.forEach(rm => {
+              const teamName = (rm.teams as any)?.name
+              const email = (rm.email as string)?.toLowerCase()
+              if (teamName && email) {
+                if (!emailTeamsMap.has(email)) {
+                  emailTeamsMap.set(email, [])
+                }
+                if (!emailTeamsMap.get(email)!.includes(teamName)) {
+                  emailTeamsMap.get(email)!.push(teamName)
+                }
+              }
+            })
+            
+            data.forEach(contact => {
+              if (!contact.linked_profile_id && contact.email) {
+                const email = contact.email.toLowerCase()
+                if (emailTeamsMap.has(email)) {
+                  const teamNames = emailTeamsMap.get(email)!
+                  ;(contact as any).all_team_names = teamNames
+                }
+              }
+            })
+          }
+        }
+      }
 
       if (error) {
         console.error('Error loading contacts:', error)
@@ -242,6 +358,14 @@ export default function ContactsPage() {
     <div className="min-h-screen bg-background">
       <Header title="Contacts" />
       <div className="container mx-auto px-4 py-6 pb-24">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-4">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <Button
@@ -352,38 +476,53 @@ export default function ContactsPage() {
               <Card
                 key={contact.id}
                 className="cursor-pointer hover:bg-muted/50 transition-colors"
-                onClick={() => {
-                  setEditingContact(contact)
-                  setDialogOpen(true)
-                }}
+                onClick={() => router.push(`/contacts/${contact.id}`)}
               >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-semibold truncate">{contact.name}</h3>
-                        {contact.relationship_type && (
+                        {contact.relationship_type === 'teammate' && (
                           <Badge variant="secondary" className="text-xs">
-                            {contact.relationship_type}
+                            Teammate
                           </Badge>
                         )}
-                        {contact.source === 'auto' && (
-                          <Badge variant="outline" className="text-xs">
-                            Auto
+                        {contact.relationship_type && contact.relationship_type !== 'teammate' && (
+                          <Badge variant="secondary" className="text-xs">
+                            {contact.relationship_type}
                           </Badge>
                         )}
                       </div>
                       <div className="space-y-1 text-sm text-muted-foreground">
                         {contact.email && <p className="truncate">{contact.email}</p>}
                         {contact.phone && <p>{contact.phone}</p>}
+                        {contact.relationship_type === 'teammate' && (
+                          <>
+                            {(contact as any).all_team_names && (contact as any).all_team_names.length > 0 ? (
+                              <p className="text-xs font-medium text-foreground mt-1">
+                                {(contact as any).all_team_names.length > 1 
+                                  ? `${(contact as any).all_team_names.join(', ')} (${(contact as any).all_team_names.length} teams)`
+                                  : (contact as any).all_team_names[0]
+                                }
+                              </p>
+                            ) : (contact as any).source_team?.name ? (
+                              <p className="text-xs font-medium text-foreground mt-1">
+                                {(contact as any).source_team.name}
+                              </p>
+                            ) : null}
+                          </>
+                        )}
                       </div>
                       {contact.tags && contact.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
-                          {contact.tags.map(tag => (
-                            <Badge key={tag} variant="outline" className="text-xs">
-                              {tag}
-                            </Badge>
-                          ))}
+                          {contact.tags
+                            .filter(tag => tag.toLowerCase() !== 'teammate')
+                            .map(tag => (
+                              <Badge key={tag} variant="outline" className="text-xs">
+                                {tag}
+                              </Badge>
+                            ))}
                         </div>
                       )}
                     </div>
@@ -393,11 +532,12 @@ export default function ContactsPage() {
                         size="icon"
                         onClick={(e) => {
                           e.stopPropagation()
-                          router.push(`/contacts/${contact.id}`)
+                          setEditingContact(contact)
+                          setDialogOpen(true)
                         }}
-                        title="View details"
+                        title="Edit contact"
                       >
-                        <Eye className="h-4 w-4" />
+                        <Edit className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"

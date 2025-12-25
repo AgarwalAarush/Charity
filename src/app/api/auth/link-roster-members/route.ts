@@ -50,12 +50,30 @@ export async function POST(request: NextRequest) {
 
     const count = linkedCount || 0
 
-    if (count === 0) {
-      // No roster members to link - this is fine, user just doesn't have any pending teams
+    // Also link event invitations that were sent to this user's email
+    let linkedInvitations = 0
+    try {
+      const { data: invitationCount, error: invitationError } = await supabase
+        .rpc('link_event_invitations_to_user', { target_user_id: user.id })
+      
+      if (!invitationError && invitationCount) {
+        linkedInvitations = invitationCount
+        if (linkedInvitations > 0) {
+          console.log(`Linked ${linkedInvitations} event invitation(s) to user ${user.id}`)
+        }
+      }
+    } catch (invitationLinkError) {
+      // Don't fail if invitation linking fails - user can still use the app
+      console.error('Error linking event invitations:', invitationLinkError)
+    }
+
+    if (count === 0 && linkedInvitations === 0) {
+      // No roster members or invitations to link - this is fine
       return NextResponse.json({
         success: true,
         linked: 0,
-        message: 'No teams found to link',
+        linkedInvitations: 0,
+        message: 'No teams or invitations found to link',
       })
     }
 
@@ -66,16 +84,25 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .eq('is_active', true)
 
+    const messages = []
+    if (count > 0) {
+      messages.push(`Successfully linked to ${count} team(s)`)
+    }
+    if (linkedInvitations > 0) {
+      messages.push(`${linkedInvitations} event invitation(s)`)
+    }
+
     return NextResponse.json({
       success: true,
       linked: count,
+      linkedInvitations: linkedInvitations,
       teams: linkedRosters?.map(rm => ({
         roster_member_id: rm.id,
         team_id: rm.team_id,
         team_name: (rm.teams as any)?.name || 'Unknown Team',
         name: rm.full_name,
       })) || [],
-      message: `Successfully linked to ${count} team(s)`,
+      message: messages.length > 0 ? messages.join(' and ') : 'No items to link',
     })
   } catch (error: any) {
     console.error('Error in link-roster-members:', error)

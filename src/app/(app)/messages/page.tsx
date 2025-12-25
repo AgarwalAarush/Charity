@@ -174,19 +174,22 @@ export default function MessagesPage() {
           const errorMessage = eventInvitesError.message || ''
           const errorDetails = eventInvitesError.details || ''
           
-          if (errorCode === '42P01' || errorMessage.includes('does not exist') || errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
+          if (errorCode === '42P01' || errorMessage.includes('does not exist') || (errorMessage.includes('relation') && errorMessage.includes('does not exist'))) {
             console.warn('event_invitations table does not exist - migration may not have been run. Skipping event invitations.')
             setEventInvitations([])
           } else {
-            // Log full error details for debugging
-            console.error('Error loading event invitations:', {
-              message: errorMessage || 'Unknown error',
-              details: errorDetails,
-              hint: eventInvitesError.hint || null,
-              code: errorCode || null,
-              fullError: JSON.stringify(eventInvitesError, null, 2),
-              errorObject: eventInvitesError,
-            })
+            // Log error details for debugging (only if there's actual content)
+            if (errorMessage || errorCode || errorDetails) {
+              console.error('Error loading event invitations:', {
+                message: errorMessage || 'Unknown error',
+                details: errorDetails,
+                hint: eventInvitesError.hint || null,
+                code: errorCode || null,
+              })
+            } else {
+              // Silent fail if error object is empty/invalid
+              console.warn('Event invitations query failed silently')
+            }
             setEventInvitations([])
           }
         } else {

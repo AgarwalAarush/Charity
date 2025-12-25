@@ -6,38 +6,41 @@ import { cn } from './utils'
  * This is the centralized styling - all badges should use this
  */
 export function getEventTypeBadgeClass(eventType?: EventType): string {
-  switch (eventType) {
+  // Normalize 'fun' to 'social' for consistent styling
+  const normalizedType = eventType === 'fun' ? 'social' : eventType
+  switch (normalizedType) {
     case 'practice':
-      return 'bg-blue-400 !text-white'
+      return '!bg-blue-600 !text-white'
     case 'warmup':
-      return 'bg-orange-500 !text-white'
+      return '!bg-orange-500 !text-white'
     case 'social':
-      return 'bg-pink-500 !text-white'
+      return '!bg-pink-500 !text-white'
     case 'other':
-      return 'bg-purple-500 !text-white'
+      return '!bg-purple-500 !text-white'
     default:
-      return 'bg-purple-500 !text-white'
+      return '!bg-purple-500 !text-white'
   }
 }
 
 /**
  * Get the color classes for an activity type badge
  * Distinct colors from event types to differentiate personal activities
+ * Uses !important flags to ensure colors override default badge variants
  */
 export function getActivityTypeBadgeClass(activityType?: ActivityType): string {
   switch (activityType) {
     case 'scrimmage':
-      return 'bg-green-600 !text-white'
+      return '!bg-green-600 !text-white'
     case 'lesson':
-      return 'bg-indigo-600 !text-white'
+      return '!bg-indigo-600 !text-white'
     case 'class':
-      return 'bg-teal-600 !text-white'
+      return '!bg-teal-600 !text-white'
     case 'flex_league':
-      return 'bg-amber-600 !text-white'
+      return '!bg-amber-600 !text-white'
     case 'other':
-      return 'bg-gray-600 !text-white'
+      return '!bg-gray-600 !text-white'
     default:
-      return 'bg-gray-600 !text-white'
+      return '!bg-gray-600 !text-white'
   }
 }
 
