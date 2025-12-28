@@ -20,6 +20,7 @@ import {
   FileText,
   CalendarCheck,
   Mail,
+  PlayCircle,
 } from 'lucide-react'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -65,11 +66,10 @@ export default function LandingPage() {
       <section className="container mx-auto px-4 py-20 text-center">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-            The Complete Tennis
-            <span className="text-green-600"> Team Management</span> Platform
+            Navigate all of your tennis life into one powerful app
           </h1>
           <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-            Streamline your team operations, coordinate matches, manage availability, and keep your players connected—all in one powerful app.
+            One unified platform for everything tennis—league play, team management, personal activities, and more.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link href="/auth/signup">
@@ -87,14 +87,125 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Personas Section */}
+      <section className="container mx-auto px-4 py-20">
+        <div className="text-center mb-16">
+          <h2 className="text-4xl font-bold text-gray-900 mb-4">
+            Built for Both Captains and Players
+          </h2>
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            Whether you're managing a team or playing on multiple teams, TennisNav has you covered
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
+          {/* Captain Persona */}
+          <Card className="border-2 border-green-200 hover:border-green-500 transition-colors bg-gradient-to-br from-green-50 to-white">
+            <CardHeader>
+              <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-green-500 to-lime-500 flex items-center justify-center mb-4">
+                <Users className="h-8 w-8 text-white" />
+              </div>
+              <CardTitle className="text-3xl mb-2">For Team Captains</CardTitle>
+              <CardDescription className="text-base">
+                Powerful tools designed by captains, for captains
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-gray-700">
+                Manage your entire team with tools that actually work. Built by seasoned captains who've been in your shoes, TennisNav includes everything you need to run a successful team.
+              </p>
+              <ul className="space-y-3 text-sm text-gray-600">
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Smart Lineup Builder:</strong> Drag-and-drop interface with AI-powered pairing suggestions</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Availability Management:</strong> Track player responses in real-time with visual grids</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Match Day Checklist:</strong> Never miss a step with automated task timelines</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Automated Communication:</strong> Send lineup emails and match reminders automatically</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Roster Management:</strong> Import players, track contact info, manage multiple teams</span>
+                </li>
+              </ul>
+            </CardContent>
+          </Card>
+
+          {/* Player Persona */}
+          <Card className="border-2 border-lime-200 hover:border-lime-500 transition-colors bg-gradient-to-br from-lime-50 to-white">
+            <CardHeader>
+              <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-lime-500 to-green-500 flex items-center justify-center mb-4">
+                <PlayCircle className="h-8 w-8 text-white" />
+              </div>
+              <CardTitle className="text-3xl mb-2">For Tennis Players</CardTitle>
+              <CardDescription className="text-base">
+                One consolidated schedule for all your tennis activities
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-gray-700">
+                Stop juggling multiple calendars and apps. See all your tennis activities in one place—league matches, flex leagues, scrimmages, fun tennis, lessons, clinics, and more.
+              </p>
+              <ul className="space-y-3 text-sm text-gray-600">
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-lime-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Unified Calendar:</strong> All your tennis activities in one view—league play, flex leagues, scrimmages, and more</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-lime-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Personal Activities:</strong> Track lessons, clinics, fun tennis, and practice sessions</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-lime-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Quick Availability:</strong> Respond to match requests with one tap</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-lime-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Match Notifications:</strong> Never miss a match with automated reminders</span>
+                </li>
+                <li className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-lime-600 flex-shrink-0 mt-0.5" />
+                  <span><strong>Performance Tracking:</strong> View your match history and statistics across all teams</span>
+                </li>
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* Designed by Captains Section */}
+      <section className="bg-gradient-to-r from-green-600 to-lime-500 py-16">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto text-center text-white">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">
+              Built by Experienced Tennis Captains
+            </h2>
+            <p className="text-xl text-green-50 mb-6">
+              TennisNav wasn't built in a boardroom—it was created by captains who've spent years managing teams, dealing with availability headaches, and struggling with lineup decisions. We know exactly what features matter most because we've lived the challenges firsthand.
+            </p>
+            <p className="text-lg text-green-50">
+              Every feature in TennisNav solves a real problem we've faced. No fluff, no unnecessary complexity—just the tools that actually make a difference.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Features Grid */}
       <section className="container mx-auto px-4 py-20">
         <div className="text-center mb-16">
           <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            Everything You Need to Manage Your Team
+            Powerful Features for Every Tennis Need
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Powerful features designed for captains, players, and tennis enthusiasts
+            Comprehensive tools designed by experienced captains who understand what really matters
           </p>
         </div>
 

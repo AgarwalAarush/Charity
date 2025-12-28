@@ -180,11 +180,9 @@ export default function LineupBuilderPage() {
   const matchId = params.matchId as string
   const [match, setMatch] = useState<Match | null>(null)
   const [ratingLimit, setRatingLimit] = useState<number | null>(null)
-  const [courts, setCourts] = useState<CourtSlot[]>([
-    { courtNumber: 1, player1: null, player2: null },
-    { courtNumber: 2, player1: null, player2: null },
-    { courtNumber: 3, player1: null, player2: null },
-  ])
+  const [totalLines, setTotalLines] = useState<number>(3)
+  const [lineMatchTypes, setLineMatchTypes] = useState<string[]>([])
+  const [courts, setCourts] = useState<CourtSlot[]>([])
   const [availablePlayers, setAvailablePlayers] = useState<PlayerWithAvailability[]>([])
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState(false)
@@ -262,15 +260,38 @@ export default function LineupBuilderPage() {
       setMatch(matchData)
     }
 
-    // Load team for rating limit
+    // Load team for rating limit and lineup configuration
     const { data: teamData } = await supabase
       .from('teams')
-      .select('rating_limit')
+      .select('rating_limit, total_lines, line_match_types')
       .eq('id', teamId)
       .single()
 
     if (teamData) {
       setRatingLimit(teamData.rating_limit)
+      const lines = teamData.total_lines || 3
+      setTotalLines(lines)
+      
+      // Convert database format to display format
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      
+      let matchTypes: string[] = []
+      if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+        matchTypes = teamData.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        // Pad to match totalLines
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        // Default to all doubles
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      setLineMatchTypes(matchTypes)
     }
 
     // Load roster
@@ -299,22 +320,31 @@ export default function LineupBuilderPage() {
       availability: availabilityData?.find(a => a.roster_member_id === player.id)?.status,
     }))
 
-    // Build courts from existing lineup
+    // Build courts from existing lineup based on team configuration
     const assignedPlayerIds = new Set<string>()
-    const newCourts: CourtSlot[] = [1, 2, 3].map(num => {
-      const lineup = lineupData?.find(l => l.court_slot === num)
+    const lines = teamData?.total_lines || 3
+    
+    // Use the match types we already set in state, or default to all doubles
+    const matchTypes = lineMatchTypes.length > 0 ? lineMatchTypes : Array.from({ length: lines }, () => 'Doubles Match')
+    
+    const newCourts: CourtSlot[] = Array.from({ length: lines }, (_, i) => {
+      const courtNum = i + 1
+      const lineup = lineupData?.find(l => l.court_slot === courtNum)
+      const matchType = matchTypes[i] || 'Doubles Match'
+      const isSingles = matchType === 'Singles Match'
+      
       const player1 = lineup?.player1_id
         ? playersWithAvail.find(p => p.id === lineup.player1_id) || null
         : null
-      const player2 = lineup?.player2_id
+      const player2 = isSingles ? null : (lineup?.player2_id
         ? playersWithAvail.find(p => p.id === lineup.player2_id) || null
-        : null
+        : null)
 
       if (player1) assignedPlayerIds.add(player1.id)
       if (player2) assignedPlayerIds.add(player2.id)
 
       return {
-        courtNumber: num,
+        courtNumber: courtNum,
         player1,
         player2,
         lineupId: lineup?.id,
@@ -541,48 +571,58 @@ export default function LineupBuilderPage() {
               )}
 
               {/* Courts */}
-              {courts.map((court, index) => (
-                <Card key={court.courtNumber} className={cn(isOverLimit(court) && 'border-red-500')}>
-                  <CardHeader className="p-3 pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm">Court {court.courtNumber}</CardTitle>
-                      {court.player1 && court.player2 && (
-                        <div className="flex items-center gap-2">
-                          <Badge variant={isOverLimit(court) ? 'destructive' : 'secondary'}>
-                            {getCombinedRating(court).toFixed(1)}
-                          </Badge>
-                          {isOverLimit(court) && (
-                            <AlertTriangle className="h-4 w-4 text-red-500" />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-3 pt-0 space-y-2">
-                    {/* Player 1 Slot */}
-                    <CourtSlotDropZone
-                      courtNumber={court.courtNumber}
-                      slot="p1"
-                      player={court.player1}
-                      onRemove={() => removeFromCourt(index, 'player1')}
-                      isSelected={selectedSlot?.courtIndex === index && selectedSlot?.slot === 'player1'}
-                      onClick={() => handleSlotClick(index, 'player1')}
-                      isSelectionMode={!!selectedSlot}
-                    />
+              {courts.map((court, index) => {
+                const matchType = lineMatchTypes[index] || 'Doubles Match'
+                const isSingles = matchType === 'Singles Match'
+                
+                return (
+                  <Card key={court.courtNumber} className={cn(isOverLimit(court) && 'border-red-500')}>
+                    <CardHeader className="p-3 pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm">
+                          Court {court.courtNumber}
+                          {isSingles && <span className="text-xs text-muted-foreground ml-2">(Singles)</span>}
+                        </CardTitle>
+                        {court.player1 && (isSingles || court.player2) && (
+                          <div className="flex items-center gap-2">
+                            <Badge variant={isOverLimit(court) ? 'destructive' : 'secondary'}>
+                              {getCombinedRating(court).toFixed(1)}
+                            </Badge>
+                            {isOverLimit(court) && (
+                              <AlertTriangle className="h-4 w-4 text-red-500" />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0 space-y-2">
+                      {/* Player 1 Slot */}
+                      <CourtSlotDropZone
+                        courtNumber={court.courtNumber}
+                        slot="p1"
+                        player={court.player1}
+                        onRemove={() => removeFromCourt(index, 'player1')}
+                        isSelected={selectedSlot?.courtIndex === index && selectedSlot?.slot === 'player1'}
+                        onClick={() => handleSlotClick(index, 'player1')}
+                        isSelectionMode={!!selectedSlot}
+                      />
 
-                    {/* Player 2 Slot */}
-                    <CourtSlotDropZone
-                      courtNumber={court.courtNumber}
-                      slot="p2"
-                      player={court.player2}
-                      onRemove={() => removeFromCourt(index, 'player2')}
-                      isSelected={selectedSlot?.courtIndex === index && selectedSlot?.slot === 'player2'}
-                      onClick={() => handleSlotClick(index, 'player2')}
-                      isSelectionMode={!!selectedSlot}
-                    />
-                  </CardContent>
-                </Card>
-              ))}
+                      {/* Player 2 Slot - only show for doubles/mixed */}
+                      {!isSingles && (
+                        <CourtSlotDropZone
+                          courtNumber={court.courtNumber}
+                          slot="p2"
+                          player={court.player2}
+                          onRemove={() => removeFromCourt(index, 'player2')}
+                          isSelected={selectedSlot?.courtIndex === index && selectedSlot?.slot === 'player2'}
+                          onClick={() => handleSlotClick(index, 'player2')}
+                          isSelectionMode={!!selectedSlot}
+                        />
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
             </div>
 
             {/* Right Column: Players */}
