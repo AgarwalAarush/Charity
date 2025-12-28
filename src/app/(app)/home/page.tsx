@@ -37,6 +37,7 @@ import { getEventTypes, getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/
 import { EventTypeBadge } from '@/components/events/event-type-badge'
 import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { TennisNavLogo } from '@/components/shared/tennisnav-logo'
 
 interface UpcomingMatch {
   id: string
@@ -138,6 +139,8 @@ export default function HomePage() {
   useEffect(() => {
     if (selectedTeamId) {
       loadTeamData(selectedTeamId)
+      // Save selection to localStorage
+      localStorage.setItem('home-selected-team-id', selectedTeamId)
     }
   }, [selectedTeamId])
 
@@ -239,9 +242,18 @@ export default function HomePage() {
     )
     setTeams(uniqueTeams)
     
-    // Set first team as selected by default
-    if (uniqueTeams.length > 0 && !selectedTeamId) {
-      setSelectedTeamId(uniqueTeams[0].id)
+    // Set team selection: use saved preference if valid, otherwise use first team
+    if (uniqueTeams.length > 0) {
+      const savedTeamId = localStorage.getItem('home-selected-team-id')
+      if (savedTeamId && uniqueTeams.some(t => t.id === savedTeamId)) {
+        // Use saved selection if it's still valid
+        if (!selectedTeamId || selectedTeamId !== savedTeamId) {
+          setSelectedTeamId(savedTeamId)
+        }
+      } else if (!selectedTeamId) {
+        // Otherwise use first team if nothing is selected
+        setSelectedTeamId(uniqueTeams[0].id)
+      }
     }
 
     if (!memberships || memberships.length === 0) {
@@ -916,6 +928,11 @@ export default function HomePage() {
       <Header title="TennisLife" />
 
       <main className="flex-1 p-4">
+        {/* Logo Section */}
+        <div className="flex justify-start mb-6 py-2">
+          <TennisNavLogo />
+        </div>
+
         {/* Announcements Section */}
         <Card className="mb-4 border-blue-200 bg-blue-50">
           <CardContent className="p-4">
