@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -26,13 +26,13 @@ interface TeamEvent {
   time: string
   location: string | null
   venue?: string | null
-  description: string | null
+  description?: string | null
   team_name: string
   availability_status?: string | null
   is_home?: boolean
 }
 
-export default function TeamAvailabilityPage() {
+function TeamAvailabilityContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const teamId = searchParams.get('teamId')
@@ -618,3 +618,17 @@ export default function TeamAvailabilityPage() {
   )
 }
 
+export default function TeamAvailabilityPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col min-h-screen">
+        <Header title="Team Availability" />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </div>
+    }>
+      <TeamAvailabilityContent />
+    </Suspense>
+  )
+}

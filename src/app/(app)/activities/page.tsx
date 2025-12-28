@@ -26,6 +26,13 @@ interface ActivityWithDetails extends PersonalEvent {
   invitation?: EventInvitation
   attendee?: EventAttendee
   attendeeCount?: number
+  attendees?: Array<{
+    id: string
+    name?: string | null
+    email: string
+    user_id?: string | null
+    profiles?: { full_name?: string | null } | null
+  }>
   isCreator?: boolean
 }
 
@@ -71,42 +78,132 @@ export default function ActivitiesPage() {
         .or(`invitee_id.eq.${user.id},invitee_email.eq.${(await supabase.from('profiles').select('email').eq('id', user.id).single()).data?.email}`)
         .in('status', ['pending', 'accepted'])
 
-      // Load attendee counts for created activities
+      // Load attendees for created activities
       if (created) {
         const activityIds = created.map(a => a.id)
         const { data: attendees } = await supabase
           .from('event_attendees')
-          .select('personal_event_id, availability_status')
+          .select('id, personal_event_id, name, email, user_id, availability_status, profiles(id, full_name)')
           .in('personal_event_id', activityIds)
+          .order('created_at', { ascending: true })
 
+        // Get user's profile for creator display
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('id', user.id)
+          .single()
+
+        // Group attendees by activity
+        const attendeesByActivity: Record<string, Array<any>> = {}
         const attendeeCounts: Record<string, { total: number; available: number }> = {}
+        
         attendees?.forEach(att => {
-          if (!attendeeCounts[att.personal_event_id]) {
-            attendeeCounts[att.personal_event_id] = { total: 0, available: 0 }
+          const eventId = att.personal_event_id
+          if (!attendeesByActivity[eventId]) {
+            attendeesByActivity[eventId] = []
+            attendeeCounts[eventId] = { total: 0, available: 0 }
           }
-          attendeeCounts[att.personal_event_id].total++
+          attendeesByActivity[eventId].push(att)
+          attendeeCounts[eventId].total++
           if (att.availability_status === 'available') {
-            attendeeCounts[att.personal_event_id].available++
+            attendeeCounts[eventId].available++
           }
         })
 
-        const createdWithDetails: ActivityWithDetails[] = created.map(activity => ({
-          ...activity,
-          isCreator: true,
-          attendeeCount: attendeeCounts[activity.id]?.total || 0,
-        }))
+        const createdWithDetails: ActivityWithDetails[] = created.map(activity => {
+          const activityAttendees = attendeesByActivity[activity.id] || []
+          const creatorIsAttendee = activityAttendees.some(
+            (att: any) => att.user_id === user.id || att.email === userProfile?.email
+          )
+          
+          // If creator is not in attendees list, add them
+          let finalAttendees = [...activityAttendees]
+          if (!creatorIsAttendee && userProfile) {
+            finalAttendees.unshift({
+              id: `creator-${activity.id}`,
+              user_id: user.id,
+              email: userProfile.email,
+              name: userProfile.full_name || null,
+              profiles: { full_name: userProfile.full_name },
+              availability_status: 'available',
+              added_via: 'self',
+            })
+          }
+          
+          return {
+            ...activity,
+            isCreator: true,
+            attendeeCount: finalAttendees.length,
+            attendees: finalAttendees,
+          }
+        })
         setCreatedActivities(createdWithDetails)
       }
 
       // Load activities from invitations
       if (invitations) {
+        const invitedActivityIds = invitations
+          .map((inv: any) => inv.personal_events?.id)
+          .filter(Boolean)
+        
+        // Get user's profile for display
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('id', user.id)
+          .single()
+        
+        // Load attendees for invited activities
+        let invitedAttendeesByActivity: Record<string, Array<any>> = {}
+        if (invitedActivityIds.length > 0) {
+          const { data: invitedAttendees } = await supabase
+            .from('event_attendees')
+            .select('id, personal_event_id, name, email, user_id, profiles(id, full_name)')
+            .in('personal_event_id', invitedActivityIds)
+            .order('created_at', { ascending: true })
+          
+          invitedAttendees?.forEach(att => {
+            const eventId = att.personal_event_id
+            if (!invitedAttendeesByActivity[eventId]) {
+              invitedAttendeesByActivity[eventId] = []
+            }
+            invitedAttendeesByActivity[eventId].push(att)
+          })
+        }
+        
         const invitedWithDetails: ActivityWithDetails[] = invitations
-          .map((inv: any) => ({
-            ...inv.personal_events,
-            invitation: inv,
-            isCreator: false,
-          }))
-          .filter((activity: any) => activity.id) // Filter out nulls
+          .map((inv: any) => {
+            const activity = inv.personal_events
+            if (!activity) return null
+            
+            const activityAttendees = invitedAttendeesByActivity[activity.id] || []
+            const userIsAttendee = activityAttendees.some(
+              (att: any) => att.user_id === user.id || att.email === userProfile?.email
+            )
+            
+            // If user is not in attendees list but is invited, add them
+            let finalAttendees = [...activityAttendees]
+            if (!userIsAttendee && userProfile) {
+              finalAttendees.push({
+                id: `user-${activity.id}`,
+                user_id: user.id,
+                email: userProfile.email,
+                name: userProfile.full_name || null,
+                profiles: { full_name: userProfile.full_name },
+                availability_status: inv.status === 'accepted' ? 'available' : 'maybe',
+                added_via: 'invitation',
+              })
+            }
+            
+            return {
+              ...activity,
+              invitation: inv,
+              isCreator: false,
+              attendees: finalAttendees,
+            }
+          })
+          .filter((activity: any) => activity !== null) // Filter out nulls
         setInvitedActivities(invitedWithDetails)
       }
     } catch (error) {
@@ -225,10 +322,22 @@ export default function ActivitiesPage() {
                               <span className="truncate">{activity.location}</span>
                             )}
                           </div>
-                          {activity.attendeeCount !== undefined && (
-                            <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                              <Users className="h-3 w-3" />
-                              {activity.attendeeCount} attendee{activity.attendeeCount !== 1 ? 's' : ''}
+                          {activity.attendees && activity.attendees.length > 0 && (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              <div className="flex items-center gap-1 mb-1">
+                                <Users className="h-3 w-3" />
+                                <span>{activity.attendees.length} attendee{activity.attendees.length !== 1 ? 's' : ''}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5 mt-1">
+                                {activity.attendees.slice(0, 5).map((attendee) => (
+                                  <span key={attendee.id} className="text-xs">
+                                    {attendee.name || (attendee.profiles?.full_name) || attendee.email.split('@')[0]}
+                                    {activity.attendees!.length > 5 && activity.attendees!.indexOf(attendee) === 4 && (
+                                      <span className="text-muted-foreground"> +{activity.attendees!.length - 5} more</span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -284,6 +393,24 @@ export default function ActivitiesPage() {
                               </Badge>
                             </div>
                           )}
+                          {activity.attendees && activity.attendees.length > 0 && (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              <div className="flex items-center gap-1 mb-1">
+                                <Users className="h-3 w-3" />
+                                <span>{activity.attendees.length} attendee{activity.attendees.length !== 1 ? 's' : ''}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5 mt-1">
+                                {activity.attendees.slice(0, 5).map((attendee) => (
+                                  <span key={attendee.id} className="text-xs">
+                                    {attendee.name || (attendee.profiles?.full_name) || attendee.email.split('@')[0]}
+                                    {activity.attendees!.length > 5 && activity.attendees!.indexOf(attendee) === 4 && (
+                                      <span className="text-muted-foreground"> +{activity.attendees!.length - 5} more</span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
                       </div>
@@ -324,6 +451,7 @@ export default function ActivitiesPage() {
     </div>
   )
 }
+
 
 
 

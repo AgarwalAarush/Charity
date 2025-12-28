@@ -136,6 +136,7 @@ export interface EventAttendee {
   name?: string | null
   availability_status: 'available' | 'unavailable' | 'maybe' | 'last_resort'
   invited_via?: string | null
+  added_via: 'direct' | 'invitation' | 'self'
   created_at?: string
   updated_at?: string
 }

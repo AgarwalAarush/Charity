@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { EventInvitationDialog } from '@/components/activities/event-invitation-dialog'
+import { AddAttendeeDialog } from '@/components/activities/add-attendee-dialog'
 import { EmailService } from '@/services/EmailService'
 import {
   Calendar,
@@ -37,6 +38,7 @@ import {
   UserPlus,
   DollarSign,
   Loader2,
+  Mail,
 } from 'lucide-react'
 import {
   AlertDialog,
@@ -67,6 +69,7 @@ export default function PersonalEventDetailPage() {
   const [saving, setSaving] = useState(false)
   const [showDeleteAlert, setShowDeleteAlert] = useState(false)
   const [showInviteDialog, setShowInviteDialog] = useState(false)
+  const [showAddAttendeeDialog, setShowAddAttendeeDialog] = useState(false)
   const [myAttendee, setMyAttendee] = useState<EventAttendee | null>(null)
   const [attendees, setAttendees] = useState<EventAttendee[]>([])
   const [invitations, setInvitations] = useState<EventInvitation[]>([])
@@ -775,9 +778,17 @@ export default function PersonalEventDetailPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setShowInviteDialog(true)}
+                    onClick={() => setShowAddAttendeeDialog(true)}
                   >
                     <UserPlus className="h-4 w-4 mr-2" />
+                    Add Attendee
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowInviteDialog(true)}
+                  >
+                    <Mail className="h-4 w-4 mr-2" />
                     Invite
                   </Button>
                   {isRecurring ? (
@@ -1211,8 +1222,20 @@ export default function PersonalEventDetailPage() {
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex-1">
-                              <div className="text-sm font-medium">
-                                {attendee.name || (attendee as any).profiles?.full_name || attendee.email}
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-medium">
+                                  {attendee.name || (attendee as any).profiles?.full_name || attendee.email}
+                                </div>
+                                {!attendee.user_id && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Not on App
+                                  </Badge>
+                                )}
+                                {attendee.added_via && attendee.added_via !== 'self' && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    {attendee.added_via === 'direct' ? 'Direct' : 'Invited'}
+                                  </Badge>
+                                )}
                               </div>
                               {attendee.name && (
                                 <div className="text-xs text-muted-foreground">{attendee.email}</div>
@@ -1255,8 +1278,20 @@ export default function PersonalEventDetailPage() {
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex-1">
-                              <div className="text-sm font-medium">
-                                {attendee.name || (attendee as any).profiles?.full_name || attendee.email}
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-medium">
+                                  {attendee.name || (attendee as any).profiles?.full_name || attendee.email}
+                                </div>
+                                {!attendee.user_id && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Not on App
+                                  </Badge>
+                                )}
+                                {attendee.added_via && attendee.added_via !== 'self' && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    {attendee.added_via === 'direct' ? 'Direct' : 'Invited'}
+                                  </Badge>
+                                )}
                               </div>
                               {attendee.name && (
                                 <div className="text-xs text-muted-foreground">{attendee.email}</div>
@@ -1342,6 +1377,15 @@ export default function PersonalEventDetailPage() {
         )}
       </main>
 
+      <AddAttendeeDialog
+        open={showAddAttendeeDialog}
+        onOpenChange={setShowAddAttendeeDialog}
+        eventId={eventId}
+        onAdded={() => {
+          setShowAddAttendeeDialog(false)
+          loadEventData()
+        }}
+      />
       <EventInvitationDialog
         open={showInviteDialog}
         onOpenChange={setShowInviteDialog}
@@ -1350,6 +1394,7 @@ export default function PersonalEventDetailPage() {
           setShowInviteDialog(false)
           loadEventData()
         }}
+        initialEditScope={initialEditScope}
       />
 
       <AlertDialog open={showDeleteAlert} onOpenChange={setShowDeleteAlert}>
