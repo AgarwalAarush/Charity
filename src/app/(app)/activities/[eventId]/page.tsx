@@ -53,6 +53,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { RecurrenceSelector } from '@/components/shared/recurrence-selector'
 
 type AvailabilityStatus = 'available' | 'unavailable' | 'maybe' | 'late'
@@ -81,6 +82,8 @@ export default function PersonalEventDetailPage() {
   const [deleteScope, setDeleteScope] = useState<'single' | 'future' | 'series'>('single')
   const [seriesEvents, setSeriesEvents] = useState<PersonalEvent[]>([])
   const [deleting, setDeleting] = useState(false)
+  const [creatorIsOrganizer, setCreatorIsOrganizer] = useState(false)
+  const [updatingOrganizerStatus, setUpdatingOrganizerStatus] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -117,6 +120,7 @@ export default function PersonalEventDetailPage() {
 
       setEvent(eventData)
       setIsCreator(eventData.creator_id === user.id)
+      setCreatorIsOrganizer(eventData.creator_is_organizer || false)
       
       // Check if this is a recurring event
       const hasRecurrence = !!eventData.recurrence_series_id
@@ -432,6 +436,95 @@ export default function PersonalEventDetailPage() {
       setDeleting(false)
       setShowDeleteAlert(false)
     }
+  }
+
+  async function toggleOrganizerStatus() {
+    if (!event || !isCreator) return
+
+    setUpdatingOrganizerStatus(true)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      setUpdatingOrganizerStatus(false)
+      return
+    }
+
+    const newOrganizerStatus = !creatorIsOrganizer
+
+    // Update the event
+    const { error: updateError } = await supabase
+      .from('personal_events')
+      .update({ creator_is_organizer: newOrganizerStatus })
+      .eq('id', event.id)
+
+    if (updateError) {
+      toast({
+        title: 'Error',
+        description: updateError.message,
+        variant: 'destructive',
+      })
+      setUpdatingOrganizerStatus(false)
+      return
+    }
+
+    // Get user's profile
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email, full_name')
+      .eq('id', user.id)
+      .single()
+
+    if (profile) {
+      if (newOrganizerStatus) {
+        // Becoming organizer: remove from attendees
+        const { error: deleteError } = await supabase
+          .from('event_attendees')
+          .delete()
+          .eq('personal_event_id', event.id)
+          .or(`user_id.eq.${user.id},email.eq.${profile.email}`)
+
+        if (deleteError) {
+          console.error('Error removing creator from attendees:', deleteError)
+        }
+      } else {
+        // No longer organizer: add as attendee if not already there
+        const { data: existingAttendee } = await supabase
+          .from('event_attendees')
+          .select('id')
+          .eq('personal_event_id', event.id)
+          .or(`user_id.eq.${user.id},email.eq.${profile.email}`)
+          .maybeSingle()
+
+        if (!existingAttendee) {
+          const { error: insertError } = await supabase
+            .from('event_attendees')
+            .insert({
+              personal_event_id: event.id,
+              user_id: user.id,
+              email: profile.email,
+              name: profile.full_name || null,
+              availability_status: 'available',
+              added_via: 'self',
+            })
+
+          if (insertError) {
+            console.error('Error adding creator as attendee:', insertError)
+          }
+        }
+      }
+    }
+
+    setCreatorIsOrganizer(newOrganizerStatus)
+    await loadEventData() // Reload to refresh attendees list
+    setUpdatingOrganizerStatus(false)
+
+    toast({
+      title: newOrganizerStatus ? 'You are now organizing' : 'You are now participating',
+      description: newOrganizerStatus 
+        ? "You've been removed from the attendee list but will still see this activity in your calendar."
+        : "You've been added as an attendee and will be included in the attendee count.",
+    })
   }
 
   async function removeAttendee(attendeeId: string) {
@@ -1105,6 +1198,27 @@ export default function PersonalEventDetailPage() {
                     </div>
                   )}
 
+                  {/* Organizer Toggle - Only visible to creator */}
+                  {isCreator && (
+                    <div className="flex items-center space-x-2 pt-2 border-t">
+                      <Checkbox
+                        id="creator-is-organizer"
+                        checked={creatorIsOrganizer}
+                        onCheckedChange={toggleOrganizerStatus}
+                        disabled={updatingOrganizerStatus}
+                      />
+                      <Label 
+                        htmlFor="creator-is-organizer" 
+                        className="text-sm font-normal cursor-pointer flex-1"
+                      >
+                        I'm organizing this (not participating)
+                      </Label>
+                      {updatingOrganizerStatus && (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      )}
+                    </div>
+                  )}
+
                   {event.description && (
                     <div className="mt-3 pt-3 border-t">
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">
@@ -1385,6 +1499,7 @@ export default function PersonalEventDetailPage() {
           setShowAddAttendeeDialog(false)
           loadEventData()
         }}
+        initialEditScope={isRecurring ? 'series' : undefined}
       />
       <EventInvitationDialog
         open={showInviteDialog}

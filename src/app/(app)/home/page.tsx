@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { formatDate, formatTime, cn } from '@/lib/utils'
 import { calculateMatchAvailability } from '@/lib/availability-utils'
+import { getEffectiveUserId, getEffectiveUserEmail } from '@/lib/impersonation'
 import {
   Select,
   SelectContent,
@@ -190,6 +191,9 @@ export default function HomePage() {
       return
     }
 
+    // Get effective user ID (impersonated or logged-in)
+    const effectiveUserId = getEffectiveUserId(user.id)
+
     // Get user's roster memberships
     const { data: memberships } = await supabase
       .from('roster_members')
@@ -203,14 +207,14 @@ export default function HomePage() {
           season
         )
       `)
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
       .eq('is_active', true)
 
     // Get teams where user is captain or co-captain
     const { data: captainTeams } = await supabase
       .from('teams')
       .select('id, name, league_format, season')
-      .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+      .or(`captain_id.eq.${effectiveUserId},co_captain_id.eq.${effectiveUserId}`)
 
     // Combine and deduplicate teams
     const membershipTeams: Team[] = []
@@ -481,13 +485,14 @@ export default function HomePage() {
     setUpcomingEvents(processedEvents)
 
     // Load personal activities user is invited to or created
-    const userEmail = (await supabase.from('profiles').select('email').eq('id', user.id).single()).data?.email
+    const userProfile = await supabase.from('profiles').select('email').eq('id', effectiveUserId).single()
+    const effectiveUserEmail = getEffectiveUserEmail(userProfile.data?.email || null)
 
     // Load activities user created
     const { data: createdActivities } = await supabase
       .from('personal_events')
       .select('*')
-      .eq('creator_id', user.id)
+      .eq('creator_id', effectiveUserId)
       .gte('date', today)
       .order('date', { ascending: true })
       .order('time', { ascending: true })
@@ -496,8 +501,15 @@ export default function HomePage() {
     const { data: invitations } = await supabase
       .from('event_invitations')
       .select('*, personal_events(*)')
-      .or(`invitee_id.eq.${user.id},invitee_email.eq.${userEmail || ''}`)
+      .or(`invitee_id.eq.${effectiveUserId},invitee_email.eq.${effectiveUserEmail || ''}`)
       .in('status', ['pending', 'accepted'])
+
+    // Also load activities where user is an attendee (but not creator and not invited)
+    const { data: attendeeActivities } = await supabase
+      .from('event_attendees')
+      .select('*, personal_events(*)')
+      .or(`user_id.eq.${effectiveUserId},email.eq.${effectiveUserEmail || ''}`)
+      .gte('personal_events.date', today)
 
     // Load attendee status for personal activities
     const personalActivityIds: string[] = []
@@ -521,7 +533,7 @@ export default function HomePage() {
         .from('event_attendees')
         .select('personal_event_id, availability_status')
         .in('personal_event_id', personalActivityIds)
-        .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
+        .or(`user_id.eq.${effectiveUserId},email.eq.${effectiveUserEmail || ''}`)
 
       if (userAttendees) {
         userAttendees.forEach((att: any) => {
@@ -559,7 +571,7 @@ export default function HomePage() {
               allAttendeesByActivity[att.personal_event_id] = []
             }
             // Exclude current user
-            if (att.user_id !== user.id && att.email !== userEmail) {
+            if (att.user_id !== effectiveUserId && att.email !== effectiveUserEmail) {
               allAttendeesByActivity[att.personal_event_id].push({
                 id: att.id,
                 name: att.name,
@@ -606,6 +618,40 @@ export default function HomePage() {
               team_id: inv.personal_events.team_id,
               availability_status: attendeeStatuses[inv.personal_events.id],
               attendees: allAttendeesByActivity[inv.personal_events.id] || [],
+            })
+          }
+        }
+      })
+    }
+
+    // Add attendee-only activities (where user is an attendee but not creator and not invited)
+    if (attendeeActivities) {
+      const createdActivityIds = new Set((createdActivities || []).map(a => a.id))
+      const invitedActivityIds = new Set((invitations || []).map((inv: any) => inv.personal_events?.id).filter(Boolean))
+      
+      attendeeActivities.forEach((att: any) => {
+        const activity = att.personal_events
+        if (activity && 
+            activity.date >= today &&
+            !createdActivityIds.has(activity.id) &&
+            !invitedActivityIds.has(activity.id)) {
+          const existing = processedPersonalActivities.find(a => a.id === activity.id)
+          if (!existing) {
+            // Add this activity ID to personalActivityIds if not already there
+            if (!personalActivityIds.includes(activity.id)) {
+              personalActivityIds.push(activity.id)
+            }
+            
+            processedPersonalActivities.push({
+              id: activity.id,
+              date: activity.date,
+              time: activity.time,
+              title: activity.title,
+              activity_type: activity.activity_type,
+              location: activity.location,
+              team_id: activity.team_id,
+              availability_status: attendeeStatuses[activity.id],
+              attendees: allAttendeesByActivity[activity.id] || [],
             })
           }
         }
@@ -727,11 +773,14 @@ export default function HomePage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // Get effective user ID (impersonated or logged-in)
+    const effectiveUserId = getEffectiveUserId(user.id)
+
     // Get user's roster memberships first
     const { data: rosters } = await supabase
       .from('roster_members')
       .select('id')
-      .eq('user_id', user.id)
+      .eq('user_id', effectiveUserId)
 
     if (!rosters || rosters.length === 0) return
 
