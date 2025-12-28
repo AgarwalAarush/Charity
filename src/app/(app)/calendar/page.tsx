@@ -22,7 +22,7 @@ import {
   getPreviousWeek,
   getNextWeek
 } from '@/lib/calendar-utils'
-import { Plus, Check, X, HelpCircle, ArrowLeft, CheckSquare, Square, Save, CheckCircle2 } from 'lucide-react'
+import { Plus, Check, X, HelpCircle, ArrowLeft, CheckSquare, Square, Save, CheckCircle2, Users } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -824,12 +824,27 @@ export default function CalendarPage() {
       <Header title="Calendar" />
 
       <main className="flex-1 p-4 space-y-2">
-        {/* Back Button */}
-        <div className="flex items-center justify-between mb-2">
+        {/* Back Button and Quick Actions */}
+        <div className="flex items-center justify-between mb-2 gap-2">
           <Button variant="ghost" onClick={() => router.back()} size="sm">
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back
           </Button>
+          {teams.length > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => {
+                const teamToUse = selectedTeamIds.length > 0 
+                  ? selectedTeamIds[0] 
+                  : teams[0].id
+                router.push(`/calendar/team-availability?teamId=${teamToUse}`)
+              }}
+            >
+              <Users className="mr-2 h-4 w-4" />
+              Quick Availability
+            </Button>
+          )}
         </div>
 
         {/* Date Navigation */}
