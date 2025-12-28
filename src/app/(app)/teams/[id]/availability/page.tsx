@@ -12,7 +12,7 @@ import { RosterMember, Match, Availability } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
-import { Check, X, HelpCircle, Clock, ChevronDown, ArrowLeft, Save, Filter, Users, Trash2, X as XIcon } from 'lucide-react'
+import { Check, X, HelpCircle, Clock, ChevronDown, ArrowLeft, Save, Filter, Users, Trash2, X as XIcon, Eraser } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -67,7 +67,13 @@ interface AvailabilityData {
   events: CalendarItem[]
   items: CalendarItem[] // Combined matches and events
   availability: Record<string, Record<string, Availability>>
-  availabilityCounts: Record<string, { available: number; total: number }>
+  availabilityCounts: Record<string, { 
+    available: number
+    last_resort: number
+    maybe: number
+    unavailable: number
+    total: number 
+  }>
 }
 
 export default function AvailabilityPage() {
@@ -89,7 +95,7 @@ export default function AvailabilityPage() {
   const [teamColor, setTeamColor] = useState<string | null>(null)
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match', 'practice', 'warmup', 'other']) // Default to all
   const [openPopovers, setOpenPopovers] = useState<Record<string, boolean>>({})
-  const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'last_resort'>>>({})
+  const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'last_resort' | 'clear'>>>({})
   const [bulkAvailabilityDialog, setBulkAvailabilityDialog] = useState<{
     open: boolean
     type: 'row' | 'event' | null
@@ -314,13 +320,28 @@ export default function AvailabilityPage() {
     allItems.forEach(item => {
       const itemId = item.id
       let available = 0
+      let lastResort = 0
+      let maybe = 0
+      let unavailable = 0
       
-      // Count only players with status = 'available' (not maybe, last_resort, etc.)
-      // This will be recalculated when rendering to include pending changes
+      // Count players by status
       playerIds.forEach(playerId => {
         const avail = availability[playerId]?.[itemId]
-        if (avail && avail.status === 'available') {
-          available++
+        if (avail) {
+          switch (avail.status) {
+            case 'available':
+              available++
+              break
+            case 'last_resort':
+              lastResort++
+              break
+            case 'maybe':
+              maybe++
+              break
+            case 'unavailable':
+              unavailable++
+              break
+          }
         }
       })
       
@@ -331,7 +352,13 @@ export default function AvailabilityPage() {
         : (item.type === 'event' && (item as any).event_type === 'practice' 
           ? playerIds.length // For practices, use total team members
           : 1) // Other events default to 1
-      availabilityCounts[itemId] = { available, total: totalNeeded }
+      availabilityCounts[itemId] = { 
+        available, 
+        last_resort: lastResort,
+        maybe,
+        unavailable,
+        total: totalNeeded 
+      }
     })
 
     // Calculate player stats (including availability count)
@@ -366,7 +393,7 @@ export default function AvailabilityPage() {
   function updateAvailabilityLocal(
     playerId: string,
     itemId: string,
-    status: 'available' | 'unavailable' | 'maybe' | 'last_resort'
+    status: 'available' | 'unavailable' | 'maybe' | 'last_resort' | 'clear'
   ) {
     try {
       if (!isCaptain) {
@@ -523,8 +550,83 @@ export default function AvailabilityPage() {
 
     try {
       // Process all pending changes
+      console.log('=== SAVING ALL CHANGES ===')
+      console.log('Pending changes:', JSON.stringify(pendingChanges, null, 2))
+      
       for (const [playerId, itemChanges] of Object.entries(pendingChanges)) {
         for (const [itemId, status] of Object.entries(itemChanges)) {
+          console.log(`\nProcessing: ${playerId}-${itemId}`)
+          console.log(`  Original status from pendingChanges: "${status}" (type: ${typeof status})`)
+          
+          // Handle "clear" status - delete the availability record
+          if (status === 'clear') {
+            console.log(`  🗑️ Clearing availability for ${playerId}-${itemId}`)
+            
+            // Determine if this is a match or event
+            const item = data.items.find(i => i.id === itemId)
+            if (!item) {
+              console.error(`Item not found: ${itemId}`)
+              errors.push(`${playerId}-${itemId}: Match/Event not found`)
+              continue
+            }
+            
+            const isMatch = item?.type === 'match'
+            
+            try {
+              const query = supabase
+                .from('availability')
+                .delete()
+                .eq('roster_member_id', playerId)
+              
+              if (isMatch) {
+                query.eq('match_id', itemId)
+              } else {
+                query.eq('event_id', itemId)
+              }
+              
+              const { error } = await query
+              
+              if (error) {
+                console.error('Error deleting availability:', error)
+                errors.push(`${playerId}-${itemId}: ${error.message || 'Failed to clear availability'}`)
+              } else {
+                console.log(`  ✅ Successfully cleared availability`)
+              }
+            } catch (err) {
+              console.error('Exception deleting availability:', err)
+              errors.push(`${playerId}-${itemId}: ${err instanceof Error ? err.message : 'Failed to clear availability'}`)
+            }
+            
+            continue // Skip to next item
+          }
+          
+          // Validate status value matches database constraint
+          // Valid statuses: 'available', 'unavailable', 'maybe', 'last_resort' (replaced 'late')
+          const validStatuses = ['available', 'unavailable', 'maybe', 'last_resort']
+          
+          // Normalize the status first (trim and lowercase)
+          const normalizedStatus = String(status).trim().toLowerCase()
+          console.log(`  Normalized status: "${normalizedStatus}"`)
+          
+          // Use normalized status directly (no mapping needed)
+          const statusToUse = normalizedStatus
+          
+          if (!validStatuses.includes(statusToUse)) {
+            console.error(`  ❌ INVALID STATUS: "${normalizedStatus}"`)
+            console.error('  Valid statuses:', validStatuses)
+            console.error('  Status value details:', {
+              original: status,
+              normalized: normalizedStatus,
+              stringified: JSON.stringify(status),
+              length: status?.length,
+              charCodes: status?.split('').map(c => c.charCodeAt(0))
+            })
+            errors.push(`${playerId}-${itemId}: Invalid status value "${normalizedStatus}". Must be one of: ${validStatuses.join(', ')}`)
+            continue
+          }
+          
+          console.log(`  ✅ Status validated: "${statusToUse}"`)
+          
           // Validate playerId exists in roster
           const player = data.players.find(p => p.id === playerId)
           if (!player) {
@@ -546,12 +648,39 @@ export default function AvailabilityPage() {
           const isMatch = item?.type === 'match'
 
           try {
-            if (existing) {
+            // Always check database for existing record to avoid unique constraint violations
+            let existingRecord = null
+            if (isMatch) {
+              const { data: existing } = await supabase
+                .from('availability')
+                .select('id')
+                .eq('roster_member_id', playerId)
+                .eq('match_id', itemId)
+                .maybeSingle()
+              existingRecord = existing
+            } else {
+              const { data: existing } = await supabase
+                .from('availability')
+                .select('id')
+                .eq('roster_member_id', playerId)
+                .eq('event_id', itemId)
+                .maybeSingle()
+              existingRecord = existing
+            }
+
+            if (existingRecord) {
               // Update existing availability record
+              // Use statusToUse from validation above
+              console.log(`  📝 Updating availability:`, {
+                id: existingRecord.id,
+                oldStatus: existing?.status,
+                newStatus: statusToUse
+              })
+              
               const { error } = await supabase
                 .from('availability')
-                .update({ status })
-                .eq('id', existing.id)
+                .update({ status: statusToUse })
+                .eq('id', existingRecord.id)
               
               if (error) {
                 console.error('Error updating availability:', {
@@ -566,9 +695,10 @@ export default function AvailabilityPage() {
               }
             } else {
               // Insert new availability record
+              // Use statusToUse (already validated and normalized)
               const insertData: any = {
                 roster_member_id: playerId,
-                status,
+                status: statusToUse,
               }
               
               if (isMatch) {
@@ -577,24 +707,174 @@ export default function AvailabilityPage() {
                 insertData.event_id = itemId
               }
               
-              const { error } = await supabase
+              // Log insert data for debugging
+              console.log(`  📝 Inserting availability:`, insertData)
+              
+              // Insert without select to avoid RLS issues on the returned data
+              const { data: insertResult, error } = await supabase
                 .from('availability')
                 .insert(insertData)
               
               if (error) {
-                console.error('Error inserting availability:', {
-                  message: error.message || 'Unknown error',
-                  details: error.details || null,
-                  hint: error.hint || null,
-                  code: error.code || null,
-                  fullError: JSON.stringify(error, null, 2),
-                  errorObject: error,
-                  insertData: insertData,
-                  playerId: playerId,
-                  itemId: itemId,
-                  isMatch: isMatch,
-                })
-                errors.push(`${playerId}-${itemId}: ${error.message || 'Unknown error'}`)
+                // Extract error details - Supabase errors have code, message, details, hint
+                const errorCode = error?.code || 'NO_CODE'
+                const errorMessage = error?.message || String(error) || 'Unknown error'
+                const errorDetails = error?.details || null
+                const errorHint = error?.hint || null
+                
+                // Log the full error structure for debugging
+                console.error('=== AVAILABILITY INSERT ERROR ===')
+                console.error('Error code:', errorCode)
+                console.error('Error message:', errorMessage)
+                console.error('Error details:', errorDetails)
+                console.error('Error hint:', errorHint)
+                console.error('Insert data that failed:', insertData)
+                console.error('Status to use:', statusToUse)
+                console.error('Normalized status:', normalizedStatus)
+                console.error('Original status:', status)
+                console.error('Valid statuses:', validStatuses)
+                console.error('Status in valid list?', validStatuses.includes(normalizedStatus))
+                console.error('================================')
+                
+                // Check if it's a CHECK constraint violation (code 23514)
+                if (errorCode === '23514' || errorMessage.includes('check constraint') || errorMessage.includes('availability_status_check')) {
+                  console.error('CHECK CONSTRAINT VIOLATION DETECTED!')
+                  console.error('The status value does not match the database constraint.')
+                  console.error('Attempted status:', normalizedStatus)
+                  console.error('This suggests the database constraint allows different values than expected.')
+                  
+                  errors.push(`${playerId}-${itemId}: Database constraint violation. Status "${normalizedStatus}" is not allowed. Valid values: ${validStatuses.join(', ')}`)
+                  continue
+                }
+                
+                // Check if error is actually truthy but empty (RLS/permission issue)
+                const isEmptyError = !error || 
+                                    (typeof error === 'object' && 
+                                     Object.keys(error).length === 0 && 
+                                     !error.message && 
+                                     !error.code)
+                
+                if (isEmptyError) {
+                  console.error('Error is empty object - likely RLS/permission issue')
+                  console.error('Attempted insert data:', insertData)
+                  
+                  // Verify user is authenticated and is captain
+                  const { data: { user } } = await supabase.auth.getUser()
+                  console.error('Current user:', user?.id)
+                  console.error('Is captain:', isCaptain)
+                  
+                  // Check if roster member belongs to the team
+                  const { data: rosterCheck } = await supabase
+                    .from('roster_members')
+                    .select('id, team_id')
+                    .eq('id', playerId)
+                    .single()
+                  console.error('Roster member check:', rosterCheck)
+                  
+                  // Check team captain status
+                  if (rosterCheck?.team_id) {
+                    const { data: teamCheck } = await supabase
+                      .from('teams')
+                      .select('id, captain_id, co_captain_id')
+                      .eq('id', rosterCheck.team_id)
+                      .single()
+                    console.error('Team check:', teamCheck)
+                    console.error('Is user captain?', teamCheck?.captain_id === user?.id || teamCheck?.co_captain_id === user?.id)
+                  }
+                  
+                  errors.push(`${playerId}-${itemId}: Permission denied. RLS policy may be blocking insert. Check console for details.`)
+                  continue
+                }
+                
+                // If it's a unique constraint violation, try to update instead
+                const isDuplicateKey = errorCode === '23505' || 
+                                      errorMessage?.includes('duplicate key') || 
+                                      errorMessage?.includes('unique constraint') ||
+                                      errorMessage?.includes('UNIQUE constraint') ||
+                                      String(error).includes('duplicate') ||
+                                      String(error).includes('unique')
+                
+                if (isDuplicateKey) {
+                  // Query again to get the existing record ID
+                  let existingId = null
+                  if (isMatch) {
+                    const { data: existing } = await supabase
+                      .from('availability')
+                      .select('id')
+                      .eq('roster_member_id', playerId)
+                      .eq('match_id', itemId)
+                      .maybeSingle()
+                    existingId = existing?.id
+                  } else {
+                    const { data: existing } = await supabase
+                      .from('availability')
+                      .select('id')
+                      .eq('roster_member_id', playerId)
+                      .eq('event_id', itemId)
+                      .maybeSingle()
+                    existingId = existing?.id
+                  }
+
+                  if (existingId) {
+                    // Update the existing record with normalized status
+                    const { error: updateError } = await supabase
+                      .from('availability')
+                      .update({ status: normalizedStatus })
+                      .eq('id', existingId)
+                    
+                    if (updateError) {
+                      console.error('Error updating availability after duplicate key error:', {
+                        message: updateError.message || 'Unknown error',
+                        details: updateError.details || null,
+                        hint: updateError.hint || null,
+                        code: updateError.code || null,
+                      })
+                      errors.push(`${playerId}-${itemId}: ${updateError.message || 'Unknown error'}`)
+                    }
+                  } else {
+                    console.error('Error inserting availability (duplicate key but record not found):', {
+                      message: error.message || 'Unknown error',
+                      details: error.details || null,
+                      hint: error.hint || null,
+                      code: error.code || null,
+                      insertData: insertData,
+                      playerId: playerId,
+                      itemId: itemId,
+                      isMatch: isMatch,
+                    })
+                    errors.push(`${playerId}-${itemId}: ${error.message || 'Unknown error'}`)
+                  }
+                } else {
+                  // Log comprehensive error information
+                  const errorMessage = error?.message || String(error) || 'Unknown error'
+                  const errorCode = error?.code || 'NO_CODE'
+                  const errorDetails = error?.details || null
+                  const errorHint = error?.hint || null
+                  
+                  console.error('Error inserting availability:', {
+                    error: error,
+                    errorType: typeof error,
+                    errorString: String(error),
+                    message: errorMessage,
+                    details: errorDetails,
+                    hint: errorHint,
+                    code: errorCode,
+                    fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2),
+                    errorObject: error,
+                    insertData: insertData,
+                    playerId: playerId,
+                    itemId: itemId,
+                    isMatch: isMatch,
+                    insertResult: insertResult,
+                  })
+                  
+                  // Check if it might be an RLS/permission issue
+                  if (errorCode === '42501' || errorMessage.includes('permission') || errorMessage.includes('policy') || errorMessage.includes('RLS')) {
+                    errors.push(`${playerId}-${itemId}: Permission denied. You may not have permission to set availability for this player.`)
+                  } else {
+                    errors.push(`${playerId}-${itemId}: ${errorMessage}`)
+                  }
+                }
               }
             }
           } catch (err) {
@@ -818,8 +1098,6 @@ export default function AvailabilityPage() {
         return <X className="h-4 w-4 text-red-500" />
       case 'maybe':
         return <HelpCircle className="h-4 w-4 text-yellow-500" />
-      case 'late':
-        return <Clock className="h-4 w-4 text-orange-500" />
       case 'last_resort':
         return <HelpCircle className="h-4 w-4 text-purple-500" />
       default:
@@ -853,8 +1131,8 @@ export default function AvailabilityPage() {
         return 'bg-red-100 hover:bg-red-200 text-red-700 border-red-300'
       case 'maybe':
         return 'bg-yellow-100 hover:bg-yellow-200 text-yellow-700 border-yellow-300'
-      case 'late':
-        return 'bg-orange-100 hover:bg-orange-200 text-orange-700 border-orange-300'
+      case 'last_resort':
+        return 'bg-purple-100 hover:bg-purple-200 text-purple-700 border-purple-300'
       default:
         return 'bg-gray-100 hover:bg-gray-200 text-gray-600 border-gray-300'
     }
@@ -1102,21 +1380,36 @@ export default function AvailabilityPage() {
                     AVAILABLE
                   </th>
                   {getDisplayedItems().map(item => {
-                    const baseCount = data.availabilityCounts[item.id] || { available: 0, total: data.players.length }
+                    const baseCount = data.availabilityCounts[item.id] || { 
+                      available: 0, 
+                      last_resort: 0,
+                      maybe: 0,
+                      unavailable: 0,
+                      total: data.players.length 
+                    }
                     
-                    // Recalculate available count including pending changes
+                    // Recalculate counts including pending changes
                     let availableCount = baseCount.available
+                    let lastResortCount = baseCount.last_resort
+                    let maybeCount = baseCount.maybe
+                    let unavailableCount = baseCount.unavailable
+                    
                     data.players.forEach(player => {
                       const pendingStatus = pendingChanges[player.id]?.[item.id]
                       const savedStatus = data.availability[player.id]?.[item.id]?.status
                       
                       if (pendingStatus) {
-                        // Adjust count based on pending change
-                        if (savedStatus === 'available' && pendingStatus !== 'available') {
-                          availableCount-- // Was available, now not
-                        } else if (savedStatus !== 'available' && pendingStatus === 'available') {
-                          availableCount++ // Was not available, now is
-                        }
+                        // Remove old status from count
+                        if (savedStatus === 'available') availableCount--
+                        else if (savedStatus === 'last_resort') lastResortCount--
+                        else if (savedStatus === 'maybe') maybeCount--
+                        else if (savedStatus === 'unavailable') unavailableCount--
+                        
+                        // Add new status to count (unless it's 'clear')
+                        if (pendingStatus === 'available') availableCount++
+                        else if (pendingStatus === 'last_resort') lastResortCount++
+                        else if (pendingStatus === 'maybe') maybeCount++
+                        else if (pendingStatus === 'unavailable') unavailableCount++
                       }
                     })
                     
@@ -1150,20 +1443,33 @@ export default function AvailabilityPage() {
                         <div className="text-xs font-medium mb-1 text-left px-1 text-foreground">
                           {dateTimeText || 'No date'}
                         </div>
-                        <div className={cn(
-                          "text-xs font-medium",
-                          availableCount >= baseCount.total ? "text-green-600" : "text-red-600"
-                        )}>
-                          {(() => {
-                            const eventType = item.type === 'event' ? (item as any).event_type : null
-                            const isPractice = eventType === 'practice'
-                            // For practices, show X/Y format (available/total team members)
-                            if (isPractice) {
-                              return `${availableCount}/${data.players.length}`
-                            }
-                            // For matches and other events, show X of Y format
-                            return `${availableCount} of ${baseCount.total}`
-                          })()}
+                        <div className="space-y-0.5">
+                          <div className={cn(
+                            "text-xs font-medium",
+                            availableCount >= baseCount.total ? "text-green-600" : "text-red-600"
+                          )}>
+                            {(() => {
+                              const eventType = item.type === 'event' ? (item as any).event_type : null
+                              const isPractice = eventType === 'practice'
+                              // For practices, show X/Y format (available/total team members)
+                              if (isPractice) {
+                                return `${availableCount}/${data.players.length}`
+                              }
+                              // For matches and other events, show X of Y format
+                              return `${availableCount} of ${baseCount.total}`
+                            })()}
+                          </div>
+                          <div className="text-xs text-muted-foreground space-y-0.5">
+                            {lastResortCount > 0 && (
+                              <div className="text-purple-600">Last Resort: {lastResortCount}</div>
+                            )}
+                            {maybeCount > 0 && (
+                              <div className="text-yellow-600">Unsure: {maybeCount}</div>
+                            )}
+                            {unavailableCount > 0 && (
+                              <div className="text-red-600">Not Available: {unavailableCount}</div>
+                            )}
+                          </div>
                         </div>
                       </th>
                     )
@@ -1256,7 +1562,8 @@ export default function AvailabilityPage() {
                       const avail = data.availability[player.id]?.[item.id]
                       const pendingStatus = pendingChanges[player.id]?.[item.id]
                       // Show pending status if available, otherwise show saved status
-                      const status = pendingStatus || avail?.status
+                      // If pending status is 'clear', show as no status (null)
+                      const status = pendingStatus === 'clear' ? null : (pendingStatus || avail?.status)
                       const hasPendingChange = !!pendingStatus
                       const popoverKey = `${player.id}-${item.id}`
                       const isOpen = openPopovers[popoverKey] || false
@@ -1331,6 +1638,19 @@ export default function AvailabilityPage() {
                                     <HelpCircle className="h-4 w-4 mr-2 text-purple-500" />
                                     Last Resort
                                   </Button>
+                                  {isCaptain && (
+                                    <>
+                                      <div className="border-t my-1" />
+                                      <Button
+                                        variant="ghost"
+                                        className="w-full justify-start rounded-none text-gray-600 hover:text-gray-900"
+                                        onClick={() => updateAvailabilityLocal(player.id, item.id, 'clear')}
+                                      >
+                                        <Eraser className="h-4 w-4 mr-2 text-gray-500" />
+                                        Clear Status
+                                      </Button>
+                                    </>
+                                  )}
                                 </div>
                               </PopoverContent>
                             </Popover>

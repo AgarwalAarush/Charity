@@ -182,3 +182,4 @@ export function ContactListItem({ contact, onDelete }: ContactListItemProps) {
     </Link>
   )
 }
+

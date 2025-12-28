@@ -33,7 +33,7 @@ import { AddEventDialog } from '@/components/teams/add-event-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { startOfWeek, addDays } from 'date-fns'
 import { getTeamColor } from '@/lib/team-colors'
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 
 type ViewMode = 'week' | 'month' | 'list'
 
@@ -1164,6 +1164,11 @@ export default function CalendarPage() {
                           router.push(`/teams/${item.teamId}/events/${item.id}`)
                         }
                       }} style={{ cursor: 'pointer' }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-muted-foreground">
+                            {formatDate(item.date, 'EEE M/d')}
+                          </span>
+                        </div>
                         <CalendarItemTile item={item} compact={false} />
                       </div>
                       {rosterMemberId && (

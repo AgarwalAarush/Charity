@@ -103,23 +103,109 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
   async function searchUsers(query: string) {
     setSearching(true)
     const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
     
-    // Search profiles by name or email (case-insensitive)
+    if (!user) {
+      setSearchResults([])
+      setSearching(false)
+      return
+    }
+    
     const searchLower = query.toLowerCase()
-    const { data: profiles, error } = await supabase
+    const results: FoundUser[] = []
+    const seenUserIds = new Set<string>()
+    const seenEmails = new Set<string>()
+    
+    // First, search profiles (all app users)
+    const { data: profiles, error: profilesError } = await supabase
       .from('profiles')
       .select('id, email, full_name, ntrp_rating')
       .or(`full_name.ilike.%${searchLower}%,email.ilike.%${searchLower}%`)
       .limit(20)
       .order('full_name', { ascending: true, nullsFirst: false })
     
-    if (error) {
-      console.error('Error searching users:', error)
-      setSearchResults([])
-    } else {
-      setSearchResults(profiles || [])
+    if (!profilesError && profiles) {
+      profiles.forEach(profile => {
+        if (profile.id && profile.email) {
+          results.push(profile)
+          seenUserIds.add(profile.id)
+          seenEmails.add(profile.email.toLowerCase())
+        }
+      })
     }
     
+    // Also search roster members from user's teams (includes non-app users)
+    // Get all teams the current user is on
+    const { data: userRosterMemberships } = await supabase
+      .from('roster_members')
+      .select('team_id')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+    
+    if (userRosterMemberships && userRosterMemberships.length > 0) {
+      const userTeamIds = userRosterMemberships.map(rm => rm.team_id)
+      
+      // Search roster members from user's teams
+      const { data: rosterMembers, error: rosterError } = await supabase
+        .from('roster_members')
+        .select('user_id, email, full_name, ntrp_rating, profiles(id, email, full_name, ntrp_rating)')
+        .in('team_id', userTeamIds)
+        .eq('is_active', true)
+        .or(`full_name.ilike.%${searchLower}%,email.ilike.%${searchLower}%`)
+        .limit(20)
+      
+      if (!rosterError && rosterMembers) {
+        rosterMembers.forEach((rm: any) => {
+          const email = rm.email?.toLowerCase() || ''
+          const profile = Array.isArray(rm.profiles) ? rm.profiles[0] : rm.profiles
+          
+          // Skip if already in results (from profiles search)
+          if (rm.user_id && seenUserIds.has(rm.user_id)) {
+            return
+          }
+          if (email && seenEmails.has(email)) {
+            return
+          }
+          
+          // Prefer profile data if available, otherwise use roster member data
+          if (profile) {
+            // User has a profile - should already be in results from profiles search
+            // But add if somehow missed
+            if (!seenUserIds.has(profile.id)) {
+              results.push({
+                id: profile.id,
+                email: profile.email,
+                full_name: profile.full_name,
+                ntrp_rating: profile.ntrp_rating,
+              })
+              seenUserIds.add(profile.id)
+              seenEmails.add(profile.email.toLowerCase())
+            }
+          } else if (rm.email) {
+            // Non-app user - add from roster member data
+            results.push({
+              id: rm.user_id || '', // May be null for non-app users, but we'll use email as identifier
+              email: rm.email,
+              full_name: rm.full_name,
+              ntrp_rating: rm.ntrp_rating,
+            })
+            if (rm.user_id) {
+              seenUserIds.add(rm.user_id)
+            }
+            seenEmails.add(email)
+          }
+        })
+      }
+    }
+    
+    // Sort results by name
+    results.sort((a, b) => {
+      const nameA = (a.full_name || a.email || '').toLowerCase()
+      const nameB = (b.full_name || b.email || '').toLowerCase()
+      return nameA.localeCompare(nameB)
+    })
+    
+    setSearchResults(results.slice(0, 20))
     setSearching(false)
   }
   
@@ -181,66 +267,87 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
     // Determine which user to use (selected from search or found by email)
     const userToAdd = selectedUser || foundUser
     
-    // If user exists in app, send invitation
-    if (userToAdd) {
-      // Check if user is already on roster
+    // If user exists in app, add directly to roster
+    if (userToAdd && userToAdd.id) {
+      // Check if user is already on roster (including inactive)
       const { data: existingMember } = await supabase
         .from('roster_members')
-        .select('id')
+        .select('id, is_active')
         .eq('team_id', teamId)
         .eq('user_id', userToAdd.id)
         .maybeSingle()
 
       if (existingMember) {
-        toast({
-          title: 'Already on roster',
-          description: `${userToAdd.full_name || userToAdd.email} is already on this team`,
-          variant: 'destructive',
-        })
+        if (existingMember.is_active) {
+          toast({
+            title: 'Already on roster',
+            description: `${userToAdd.full_name || userToAdd.email} is already on this team`,
+            variant: 'destructive',
+          })
+        } else {
+          // Reactivate inactive member
+          const { error: reactivateError } = await supabase
+            .from('roster_members')
+            .update({
+              is_active: true,
+              full_name: fullName || userToAdd.full_name || '',
+              email: email || userToAdd.email || '',
+              phone: phone || null,
+              ntrp_rating: ntrpRating ? parseFloat(ntrpRating) : userToAdd.ntrp_rating || null,
+              role: role || 'player',
+            })
+            .eq('id', existingMember.id)
+
+          if (reactivateError) {
+            toast({
+              title: 'Error',
+              description: reactivateError.message,
+              variant: 'destructive',
+            })
+          } else {
+            toast({
+              title: 'Player added',
+              description: `${userToAdd.full_name || userToAdd.email} has been added to the roster`,
+            })
+            setFullName('')
+            setEmail('')
+            setPhone('')
+            setNtrpRating('')
+            setRole('player')
+            setFoundUser(null)
+            setSelectedUser(null)
+            setEmailChecked(false)
+            onAdded()
+          }
+        }
         setLoading(false)
         return
       }
 
-      // Check for pending invitation
-      const { data: existingInvite } = await supabase
-        .from('team_invitations')
-        .select('id')
-        .eq('team_id', teamId)
-        .eq('invitee_id', userToAdd.id)
-        .eq('status', 'pending')
-        .maybeSingle()
-
-      if (existingInvite) {
-        toast({
-          title: 'Already invited',
-          description: `${userToAdd.full_name || userToAdd.email} has a pending invitation`,
-          variant: 'destructive',
-        })
-        setLoading(false)
-        return
-      }
-
-      // Create invitation
-      const { error: inviteError } = await supabase
-        .from('team_invitations')
+      // Add user directly to roster
+      const { error: insertError } = await supabase
+        .from('roster_members')
         .insert({
           team_id: teamId,
-          inviter_id: user.id,
-          invitee_id: userToAdd.id,
-          invitee_email: userToAdd.email,
-          status: 'pending',
+          user_id: userToAdd.id,
+          full_name: fullName || userToAdd.full_name || '',
+          email: email || userToAdd.email || '',
+          phone: phone || null,
+          ntrp_rating: ntrpRating ? parseFloat(ntrpRating) : userToAdd.ntrp_rating || null,
+          role: role || 'player',
+          is_active: true,
         })
 
-      if (inviteError) {
+      if (insertError) {
         toast({
-          title: 'Error sending invitation',
-          description: inviteError.message,
+          title: 'Error adding player',
+          description: insertError.message,
           variant: 'destructive',
         })
       } else {
         toast({
-          title: 'Invitation sent!',
-          description: `${userToAdd.full_name || userToAdd.email} will see the invitation in their Messages tab`,
+          title: 'Player added!',
+          description: `${userToAdd.full_name || userToAdd.email} has been added to the roster`,
         })
         setFullName('')
         setEmail('')
@@ -252,6 +359,8 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
         setEmailChecked(false)
         onAdded()
       }
+      setLoading(false)
+      return
     } else {
       // Fall back to adding as non-user roster member
       // First check if email already exists on roster (including inactive members)

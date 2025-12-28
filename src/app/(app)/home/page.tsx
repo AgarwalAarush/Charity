@@ -68,7 +68,24 @@ interface UpcomingEvent {
   }
 }
 
-type CalendarItem = (UpcomingMatch & { type: 'match' }) | (UpcomingEvent & { type: 'event' })
+interface UpcomingPersonalActivity {
+  id: string
+  date: string
+  time: string
+  title: string
+  activity_type: string
+  location: string | null
+  team_id: string | null
+  availability_status?: string
+  attendees?: Array<{
+    id: string
+    name: string | null
+    email: string
+    user_id: string | null
+  }>
+}
+
+type CalendarItem = (UpcomingMatch & { type: 'match' }) | (UpcomingEvent & { type: 'event' }) | (UpcomingPersonalActivity & { type: 'personal_activity' })
 
 interface Team {
   id: string
@@ -82,6 +99,12 @@ export default function HomePage() {
   const [upcomingMatches, setUpcomingMatches] = useState<UpcomingMatch[]>([])
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([])
   const [upcomingPersonalActivities, setUpcomingPersonalActivities] = useState<UpcomingPersonalActivity[]>([])
+  const [matchLineups, setMatchLineups] = useState<Record<string, Array<{
+    id: string
+    court_slot: number
+    player1: { id: string; full_name: string } | null
+    player2: { id: string; full_name: string } | null
+  }>>>({})
   const [allItems, setAllItems] = useState<CalendarItem[]>([])
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match', 'practice', 'warmup', 'social', 'other'])
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
@@ -266,6 +289,7 @@ export default function HomePage() {
     const { data: lineups } = await supabase
       .from('lineups')
       .select(`
+        id,
         match_id,
         court_slot,
         player1_id,
@@ -282,6 +306,33 @@ export default function HomePage() {
       `)
       .in('match_id', matchIds)
       .eq('is_published', true)
+      .order('court_slot', { ascending: true })
+
+    // Group lineups by match_id
+    const lineupsByMatch: Record<string, Array<{
+      id: string
+      court_slot: number
+      player1: { id: string; full_name: string } | null
+      player2: { id: string; full_name: string } | null
+    }>> = {}
+    
+    if (lineups) {
+      lineups.forEach((lineup: any) => {
+        if (!lineupsByMatch[lineup.match_id]) {
+          lineupsByMatch[lineup.match_id] = []
+        }
+        const player1 = Array.isArray(lineup.player1) ? lineup.player1[0] : lineup.player1
+        const player2 = Array.isArray(lineup.player2) ? lineup.player2[0] : lineup.player2
+        lineupsByMatch[lineup.match_id].push({
+          id: lineup.id,
+          court_slot: lineup.court_slot,
+          player1: player1 ? { id: player1.id, full_name: player1.full_name } : null,
+          player2: player2 ? { id: player2.id, full_name: player2.full_name } : null,
+        })
+      })
+    }
+    
+    setMatchLineups(lineupsByMatch)
 
     const { data: availabilities } = await supabase
       .from('availability')
@@ -462,16 +513,61 @@ export default function HomePage() {
     }
 
     let attendeeStatuses: Record<string, string> = {}
+    let allAttendeesByActivity: Record<string, Array<{ id: string; name: string | null; email: string; user_id: string | null }>> = {}
+    
     if (personalActivityIds.length > 0) {
-      const { data: attendees } = await supabase
+      // Load current user's attendee status
+      const { data: userAttendees } = await supabase
         .from('event_attendees')
         .select('personal_event_id, availability_status')
         .in('personal_event_id', personalActivityIds)
         .or(`user_id.eq.${user.id},email.eq.${userEmail || ''}`)
 
-      if (attendees) {
-        attendees.forEach((att: any) => {
+      if (userAttendees) {
+        userAttendees.forEach((att: any) => {
           attendeeStatuses[att.personal_event_id] = att.availability_status
+        })
+      }
+
+      // Load all attendees - assume they are confirmed unless they have declined (unavailable)
+      const { data: allAttendees } = await supabase
+        .from('event_attendees')
+        .select('id, personal_event_id, name, email, user_id, availability_status')
+        .in('personal_event_id', personalActivityIds)
+
+      if (allAttendees) {
+        // Count total attendees per activity (including current user)
+        // Only count attendees who haven't declined (unavailable)
+        const totalAttendeesByActivity: Record<string, number> = {}
+        allAttendees.forEach((att: any) => {
+          // Only count if not declined (unavailable)
+          if (att.availability_status !== 'unavailable') {
+            if (!totalAttendeesByActivity[att.personal_event_id]) {
+              totalAttendeesByActivity[att.personal_event_id] = 0
+            }
+            totalAttendeesByActivity[att.personal_event_id]++
+          }
+        })
+
+        // Store all attendees except those who declined (unavailable) and current user
+        // Only for activities with 6 or fewer total attendees
+        allAttendees.forEach((att: any) => {
+          const totalCount = totalAttendeesByActivity[att.personal_event_id] || 0
+          // Include if total attendees <= 6 and status is not 'unavailable' (declined)
+          if (totalCount <= 6 && att.availability_status !== 'unavailable') {
+            if (!allAttendeesByActivity[att.personal_event_id]) {
+              allAttendeesByActivity[att.personal_event_id] = []
+            }
+            // Exclude current user
+            if (att.user_id !== user.id && att.email !== userEmail) {
+              allAttendeesByActivity[att.personal_event_id].push({
+                id: att.id,
+                name: att.name,
+                email: att.email,
+                user_id: att.user_id,
+              })
+            }
+          }
         })
       }
     }
@@ -489,6 +585,7 @@ export default function HomePage() {
           activity_type: activity.activity_type,
           location: activity.location,
           team_id: activity.team_id,
+          attendees: allAttendeesByActivity[activity.id] || [],
         })
       })
     }
@@ -508,6 +605,7 @@ export default function HomePage() {
               location: inv.personal_events.location,
               team_id: inv.personal_events.team_id,
               availability_status: attendeeStatuses[inv.personal_events.id],
+              attendees: allAttendeesByActivity[inv.personal_events.id] || [],
             })
           }
         }
@@ -957,11 +1055,25 @@ export default function HomePage() {
                             </Badge>
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {formatDate(match.date, 'MMM d')} at {formatTime(match.time)}
+                            {formatDate(match.date, 'EEE M/d')} at {formatTime(match.time)}
                           </div>
                           {match.venue && (
                             <div className="text-xs text-muted-foreground mt-1 truncate">
                               {match.venue}
+                            </div>
+                          )}
+                          {matchLineups[match.id] && matchLineups[match.id].length > 0 && (
+                            <div className="mt-2 pt-2 border-t space-y-1">
+                              {matchLineups[match.id].map((lineup) => (
+                                <div key={lineup.id} className="text-xs">
+                                  <span className="font-medium">Court {lineup.court_slot}:</span>
+                                  <span className="text-muted-foreground ml-1">
+                                    {lineup.player1?.full_name || 'TBD'}
+                                    {lineup.player2 && ` & ${lineup.player2.full_name}`}
+                                    {!lineup.player1 && !lineup.player2 && ' No players assigned'}
+                                  </span>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -1019,6 +1131,10 @@ export default function HomePage() {
                 } else if (item.type === 'personal_activity') {
                   const activity = item
                   const personalActivity = upcomingPersonalActivities.find(a => a.id === activity.id)
+                  const otherPlayers = personalActivity?.attendees || []
+                  // Show other players if there are any (they're only loaded if total <= 6)
+                  const shouldShowPlayers = otherPlayers.length > 0
+                  
                   return (
                     <Link key={activity.id} href={`/activities/${activity.id}`}>
                       <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
@@ -1032,8 +1148,16 @@ export default function HomePage() {
                                 </span>
                               </div>
                               <div className="text-sm text-muted-foreground">
-                                {formatDate(activity.date, 'MMM d')} at {formatTime(activity.time)}
+                                {formatDate(activity.date, 'EEE M/d')} at {formatTime(activity.time)}
                               </div>
+                              {shouldShowPlayers && (
+                                <div className="flex items-center gap-2 mt-2">
+                                  <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">
+                                    Playing with: {otherPlayers.map(p => p.name || p.email).join(', ')}
+                                  </span>
+                                </div>
+                              )}
                               {activity.teamId && (
                                 <Badge variant="outline" className="text-xs mt-1">
                                   {activity.teamName}
@@ -1105,7 +1229,7 @@ export default function HomePage() {
                                 </Badge>
                               </div>
                               <div className="text-sm text-muted-foreground">
-                                {formatDate(event.date, 'MMM d')} at {formatTime(event.time)}
+                                {formatDate(event.date, 'EEE M/d')} at {formatTime(event.time)}
                               </div>
                               {event.location && (
                                 <div className="text-xs text-muted-foreground mt-1 truncate">

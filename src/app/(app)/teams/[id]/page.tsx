@@ -51,8 +51,16 @@ import {
   Check,
   X,
   HelpCircle,
-  Clock
+  Clock,
+  ArrowRightLeft
 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { AddMatchDialog } from '@/components/teams/add-match-dialog'
 import { AddEventDialog } from '@/components/teams/add-event-dialog'
 
@@ -80,6 +88,7 @@ export default function TeamDetailPage() {
   } | null>(null)
   const [expandedLineups, setExpandedLineups] = useState<Record<string, boolean>>({})
   const [matchLineups, setMatchLineups] = useState<Record<string, any[]>>({})
+  const [userTeams, setUserTeams] = useState<Array<{ id: string; name: string }>>([])
 
   useEffect(() => {
     loadTeamData()
@@ -88,6 +97,26 @@ export default function TeamDetailPage() {
   async function loadTeamData() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
+
+    // Load all teams the user is on
+    if (user) {
+      const { data: rosterMemberships } = await supabase
+        .from('roster_members')
+        .select('team_id, teams(id, name)')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+
+      if (rosterMemberships) {
+        const teams = rosterMemberships
+          .map((rm: any) => {
+            const team = Array.isArray(rm.teams) ? rm.teams[0] : rm.teams
+            return team ? { id: team.id, name: team.name } : null
+          })
+          .filter((t): t is { id: string; name: string } => t !== null)
+        
+        setUserTeams(teams)
+      }
+    }
 
     const { data: teamData } = await supabase
       .from('teams')
@@ -291,6 +320,37 @@ export default function TeamDetailPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header title={team.name} />
+      
+      {/* Team Switcher - Only show if user is on multiple teams */}
+      {userTeams.length > 1 && (
+        <div className="px-4 pb-2">
+          <Card>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-muted-foreground">Switch Team:</span>
+                <Select
+                  value={teamId}
+                  onValueChange={(newTeamId) => {
+                    router.push(`/teams/${newTeamId}`)
+                  }}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userTeams.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <main className="flex-1 p-4 space-y-4">
         {/* Team Info */}
@@ -600,7 +660,6 @@ export default function TeamDetailPage() {
                             available: { icon: Check, label: 'Available', color: 'text-green-500' },
                             unavailable: { icon: X, label: 'Unavailable', color: 'text-red-500' },
                             maybe: { icon: HelpCircle, label: 'Maybe', color: 'text-yellow-500' },
-                            late: { icon: Clock, label: 'Running Late', color: 'text-orange-500' },
                             last_resort: { icon: HelpCircle, label: 'Last Resort', color: 'text-purple-500' },
                           }
                           const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.unavailable

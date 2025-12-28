@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import { Event, Match, Team } from '@/types/database.types'
 import Link from 'next/link'
 
-type AvailabilityStatus = 'available' | 'unavailable' | 'maybe' | 'late' | 'last_resort'
+type AvailabilityStatus = 'available' | 'unavailable' | 'maybe' | 'last_resort'
 
 interface EventItem {
   id: string
@@ -673,8 +673,6 @@ export default function BulkAvailabilityPage() {
         return <X className="h-4 w-4 text-red-500" />
       case 'maybe':
         return <HelpCircle className="h-4 w-4 text-yellow-500" />
-      case 'late':
-        return <Clock className="h-4 w-4 text-orange-500" />
       case 'last_resort':
         return <HelpCircle className="h-4 w-4 text-purple-500" />
       default:
@@ -690,8 +688,6 @@ export default function BulkAvailabilityPage() {
         return 'Unavailable'
       case 'maybe':
         return 'Maybe'
-      case 'late':
-        return 'Running Late'
       case 'last_resort':
         return 'Last Resort'
       default:
@@ -840,12 +836,6 @@ export default function BulkAvailabilityPage() {
                         <div className="flex items-center gap-2">
                           <HelpCircle className="h-4 w-4 text-purple-500" />
                           <span>Last Resort</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="late">
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-orange-500" />
-                          <span>Running Late</span>
                         </div>
                       </SelectItem>
                       <SelectItem value="unavailable">
@@ -1012,12 +1002,6 @@ export default function BulkAvailabilityPage() {
                             <div className="flex items-center gap-2">
                               <HelpCircle className="h-4 w-4 text-yellow-500" />
                               <span>Maybe</span>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="late">
-                            <div className="flex items-center gap-2">
-                              <Clock className="h-4 w-4 text-orange-500" />
-                              <span>Running Late</span>
                             </div>
                           </SelectItem>
                           <SelectItem value="last_resort">

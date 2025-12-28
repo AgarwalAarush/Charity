@@ -20,11 +20,13 @@ import {
   Edit, 
   Trash2, 
   Phone, 
-  ArrowLeft 
+  ArrowLeft,
+  UserPlus
 } from 'lucide-react'
 import { AddPlayerDialog } from '@/components/teams/add-player-dialog'
 import { ImportPlayersDialog } from '@/components/teams/import-players-dialog'
 import { EditPlayerDialog } from '@/components/teams/edit-player-dialog'
+import { InvitePlayerDialog } from '@/components/teams/invite-player-dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,9 +49,11 @@ export default function RosterPage() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
+  const [showInviteDialog, setShowInviteDialog] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<RosterMember | null>(null)
   const [showDeleteAlert, setShowDeleteAlert] = useState(false)
   const [playerToDelete, setPlayerToDelete] = useState<RosterMember | null>(null)
+  const [teamName, setTeamName] = useState<string>('')
   const { toast } = useToast()
 
   useEffect(() => {
@@ -59,6 +63,17 @@ export default function RosterPage() {
 
   async function loadRoster() {
     const supabase = createClient()
+
+    // Load team name
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('name')
+      .eq('id', teamId)
+      .single()
+    
+    if (teamData) {
+      setTeamName(teamData.name)
+    }
 
     const { data } = await supabase
       .from('roster_members')
@@ -198,6 +213,10 @@ export default function RosterPage() {
           <h2 className="text-lg font-semibold">{roster.length} Players</h2>
           {isCaptain && (
             <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowInviteDialog(true)}>
+                <UserPlus className="h-4 w-4 mr-1" />
+                Invite to Join
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setShowImportDialog(true)}>
                 <Upload className="h-4 w-4 mr-1" />
                 Import CSV
@@ -351,6 +370,14 @@ export default function RosterPage() {
           setEditingPlayer(null)
           loadRoster()
         }}
+      />
+
+      <InvitePlayerDialog
+        open={showInviteDialog}
+        onOpenChange={setShowInviteDialog}
+        teamId={teamId}
+        teamName={teamName}
+        onInvited={loadRoster}
       />
 
       <AlertDialog open={showDeleteAlert} onOpenChange={setShowDeleteAlert}>

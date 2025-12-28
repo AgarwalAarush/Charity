@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       message: 'Email sent successfully',
     })
   } catch (error) {
-    console.error('Error sending invitation email:', error)
+    console.error('Error sending team invitation email:', error)
     return NextResponse.json(
       { 
         error: 'Failed to send email',

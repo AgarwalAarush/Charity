@@ -53,6 +53,14 @@ interface EventCanceledEmailData {
   appUrl?: string
 }
 
+interface TeamInvitationEmailData {
+  teamName: string
+  inviterName: string
+  inviteeName?: string
+  invitationMessage?: string | null
+  appUrl?: string
+}
+
 export class EmailService {
   /**
    * Template A: Auto-Welcome Email
@@ -184,6 +192,53 @@ Time: ${formatTime(eventTime)}`
     }
 
     body += `\n\nSee you there!
+TennisLife`
+
+    return {
+      to: '', // Will be set by caller
+      subject,
+      body,
+    }
+  }
+
+  /**
+   * Template F: Team Invitation Email
+   * Sent when inviting someone to join a team (for non-app users)
+   */
+  static compileTeamInvitationEmail(data: TeamInvitationEmailData): EmailData {
+    const {
+      teamName,
+      inviterName,
+      inviteeName,
+      invitationMessage,
+      appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tennislife.app'
+    } = data
+
+    const inviteeGreeting = inviteeName ? inviteeName.split(' ')[0] : 'there'
+
+    const subject = `You're invited to join ${teamName} on TennisLife`
+
+    let body = `Hi ${inviteeGreeting},
+
+${inviterName} has invited you to join ${teamName} on TennisLife!
+
+TennisLife is a mobile app that helps tennis teams manage matches, practices, availability, and more.`
+
+    if (invitationMessage) {
+      body += `\n\nMessage from ${inviterName}:\n"${invitationMessage}"`
+    }
+
+    body += `\n\nTo accept this invitation and join ${teamName}:
+1. Sign up for TennisLife at: ${appUrl}/auth/signup
+2. Use this email address when creating your account
+3. Once you sign up, you'll automatically be added to ${teamName} and can start using the app!
+
+If you already have a TennisLife account with this email, you'll see the invitation in your Messages tab after logging in.
+
+We look forward to having you on the team!
+
+Best,
+${inviterName}
 TennisLife`
 
     return {

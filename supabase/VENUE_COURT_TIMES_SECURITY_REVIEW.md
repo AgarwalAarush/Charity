@@ -231,3 +231,4 @@ Before deploying to production:
 - [ ] Check trigger updates `updated_at` correctly
 - [ ] Verify CHECK constraint prevents invalid data
 
+

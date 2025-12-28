@@ -68,3 +68,4 @@ export function getAllActivityTypes(): ActivityTypeOption[] {
   return DEFAULT_ACTIVITY_TYPES
 }
 
+
