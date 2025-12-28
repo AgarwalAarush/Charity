@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -8,10 +9,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { Team } from '@/types/database.types'
-import { Plus, Users, Calendar, ChevronRight } from 'lucide-react'
+import { Plus, Users, Calendar, ChevronRight, ArrowLeft } from 'lucide-react'
 import { CreateTeamDialog } from '@/components/teams/create-team-dialog'
 
 export default function TeamsPage() {
+  const router = useRouter()
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -67,6 +69,14 @@ export default function TeamsPage() {
       <Header title="Teams" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">My Teams</h2>
           <Button size="sm" onClick={() => setShowCreateDialog(true)}>

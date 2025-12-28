@@ -16,7 +16,26 @@ export function formatTime(time: string): string {
   const hour = parseInt(hours, 10)
   const ampm = hour >= 12 ? 'PM' : 'AM'
   const formattedHour = hour % 12 || 12
-  return `${formattedHour}:${minutes} ${ampm}`
+  return `${formattedHour}:${minutes}${minutes === '00' ? '' : ''} ${ampm}`
+}
+
+export function calculateEndTime(startTime: string, durationMinutes: number | null | undefined): string {
+  if (!durationMinutes) return startTime
+  
+  const [hours, minutes] = startTime.split(':')
+  const startHour = parseInt(hours, 10)
+  const startMinute = parseInt(minutes, 10)
+  
+  const totalMinutes = startHour * 60 + startMinute + durationMinutes
+  const endHour = Math.floor(totalMinutes / 60) % 24
+  const endMinute = totalMinutes % 60
+  
+  // Handle case where endMinute is exactly 60 (should be 0 with hour incremented)
+  // This shouldn't happen with proper modulo, but ensure clean output
+  const finalHour = endMinute === 60 ? (endHour + 1) % 24 : endHour
+  const finalMinute = endMinute === 60 ? 0 : endMinute
+  
+  return `${finalHour.toString().padStart(2, '0')}:${finalMinute.toString().padStart(2, '0')}`
 }
 
 export function getWarmupMessage(
@@ -44,8 +63,8 @@ export function getAvailabilityColor(status: string): string {
       return 'bg-gray-400'
     case 'maybe':
       return 'bg-yellow-500'
-    case 'late':
-      return 'bg-orange-500'
+    case 'last_resort':
+      return 'bg-purple-500'
     default:
       return 'bg-gray-200'
   }
@@ -158,6 +177,97 @@ export function parseCSVSchedule(csvText: string): Array<{
       }
 
       results.push(match)
+    }
+  }
+
+  return results
+}
+
+export function parseCSVPlayers(csvText: string): Array<{
+  fullName: string
+  email?: string
+  phone?: string
+  ntrpRating?: number
+  role?: 'captain' | 'co-captain' | 'player'
+}> {
+  const lines = csvText.trim().split('\n')
+  const results: Array<{
+    fullName: string
+    email?: string
+    phone?: string
+    ntrpRating?: number
+    role?: 'captain' | 'co-captain' | 'player'
+  }> = []
+
+  // Skip header if present
+  const firstLine = lines[0].toLowerCase()
+  const hasHeader = firstLine.includes('name') || firstLine.includes('email') || firstLine.includes('full')
+  const startIndex = hasHeader ? 1 : 0
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    // Handle CSV with quoted fields that may contain commas
+    const parts: string[] = []
+    let current = ''
+    let inQuotes = false
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j]
+      if (char === '"') {
+        inQuotes = !inQuotes
+      } else if (char === ',' && !inQuotes) {
+        parts.push(current.trim())
+        current = ''
+      } else {
+        current += char
+      }
+    }
+    parts.push(current.trim()) // Add the last part
+
+    // Remove quotes from parts
+    const cleanedParts = parts.map(p => p.replace(/^"|"$/g, ''))
+
+    if (cleanedParts.length >= 1 && cleanedParts[0]) {
+      // CSV format: Full Name, Email, Phone, NTRP Rating, Role
+      const player: any = {
+        fullName: cleanedParts[0],
+      }
+
+      // Email (index 1)
+      if (cleanedParts[1] && cleanedParts[1].includes('@')) {
+        player.email = cleanedParts[1].trim()
+      }
+
+      // Phone (index 2)
+      if (cleanedParts[2]) {
+        player.phone = cleanedParts[2].trim()
+      }
+
+      // NTRP Rating (index 3)
+      if (cleanedParts[3] && !isNaN(parseFloat(cleanedParts[3]))) {
+        const rating = parseFloat(cleanedParts[3])
+        if (rating >= 1.0 && rating <= 7.0) {
+          player.ntrpRating = rating
+        }
+      }
+
+      // Role (index 4)
+      if (cleanedParts[4]) {
+        const role = cleanedParts[4].toLowerCase().trim()
+        if (role === 'captain' || role === 'co-captain' || role === 'player') {
+          player.role = role
+        } else if (role === 'cocaptain' || role === 'co_captain') {
+          player.role = 'co-captain'
+        } else {
+          player.role = 'player' // Default
+        }
+      } else {
+        player.role = 'player' // Default
+      }
+
+      results.push(player)
     }
   }
 

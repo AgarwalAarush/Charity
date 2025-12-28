@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,97 +23,202 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
-import { Loader2 } from 'lucide-react'
-import { addDays, addWeeks, format, parseISO } from 'date-fns'
+import { Loader2, Plus } from 'lucide-react'
+import { format } from 'date-fns'
 import { getEventTypes } from '@/lib/event-type-colors'
 import { EventType } from '@/lib/calendar-utils'
+import { RecurrenceSelector } from '@/components/shared/recurrence-selector'
+import { LocationSelector } from '@/components/shared/location-selector'
+import { generateRecurringDates, RecurrencePattern, RecurrenceEndType, CustomRecurrenceData } from '@/lib/recurrence-utils'
 
 interface AddEventDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  teamId: string
+  teamId?: string // Optional - if not provided, will show team selector
   onAdded: () => void
+  availableTeams?: Array<{ id: string; name: string }> // Teams user can create events for
 }
 
 export function AddEventDialog({
   open,
   onOpenChange,
-  teamId,
+  teamId: initialTeamId,
   onAdded,
+  availableTeams = [],
 }: AddEventDialogProps) {
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(initialTeamId || '')
   const [eventName, setEventName] = useState('')
   const [date, setDate] = useState('')
   const [time, setTime] = useState('')
-  const [duration, setDuration] = useState('')
+  const [duration, setDuration] = useState('60')
   const [location, setLocation] = useState('')
   const [description, setDescription] = useState('')
-  const [eventType, setEventType] = useState<EventType | ''>('')
+  const [eventType, setEventType] = useState<EventType>('other')
   const [isRecurring, setIsRecurring] = useState(false)
-  const [recurrencePattern, setRecurrencePattern] = useState<'daily' | 'weekly' | 'custom'>('weekly')
-  const [endType, setEndType] = useState<'date' | 'occurrences'>('date')
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('weekly')
+  const [endType, setEndType] = useState<RecurrenceEndType>('date')
   const [endDate, setEndDate] = useState('')
   const [occurrences, setOccurrences] = useState('')
+  const [customRecurrence, setCustomRecurrence] = useState<CustomRecurrenceData>({
+    interval: 1,
+    timeUnit: 'week',
+    selectedDays: [],
+  })
   const [loading, setLoading] = useState(false)
+  const [selectedVenueId, setSelectedVenueId] = useState<string | undefined>(undefined)
+  const [locationMode, setLocationMode] = useState<'venue' | 'custom'>('venue')
+  const [isCaptain, setIsCaptain] = useState(false)
+  const [venueCourtTimes, setVenueCourtTimes] = useState<Array<{ id: string; start_time: string }>>([])
+  const [useCourtTime, setUseCourtTime] = useState(false)
   const { toast } = useToast()
+
+  // Sync selectedTeamId when initialTeamId changes
+  useEffect(() => {
+    if (initialTeamId) {
+      setSelectedTeamId(initialTeamId)
+    } else if (availableTeams.length > 0 && !selectedTeamId) {
+      setSelectedTeamId(availableTeams[0].id)
+    }
+  }, [initialTeamId, availableTeams])
+
+  useEffect(() => {
+    if (open && selectedTeamId) {
+      checkCaptainStatus()
+    }
+  }, [open, selectedTeamId])
+
+  // Load court times when venue is selected
+  useEffect(() => {
+    if (selectedVenueId && locationMode === 'venue') {
+      loadVenueCourtTimes(selectedVenueId)
+    } else {
+      setVenueCourtTimes([])
+      setUseCourtTime(false)
+    }
+  }, [selectedVenueId, locationMode])
+
+  async function checkCaptainStatus() {
+    if (!selectedTeamId) return
+    
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) {
+      setIsCaptain(false)
+      return
+    }
+
+    if (!selectedTeamId) return
+    
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('captain_id, co_captain_id')
+      .eq('id', selectedTeamId)
+      .single()
+
+    if (teamData && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      setIsCaptain(true)
+    } else {
+      setIsCaptain(false)
+    }
+  }
+
+  async function loadVenueCourtTimes(venueId: string) {
+    if (!venueId) {
+      setVenueCourtTimes([])
+      return
+    }
+
+    const supabase = createClient()
+    try {
+      const { data, error } = await supabase
+        .from('venue_court_times')
+        .select('id, start_time')
+        .eq('venue_id', venueId)
+        .order('display_order', { ascending: true })
+        .order('start_time', { ascending: true })
+
+      if (error) {
+        // If table doesn't exist or RLS blocks access, silently fail
+        // This allows the app to work even if the migration hasn't been run
+        if (error.code === '42P01' || error.code === '42501') {
+          console.warn('Court times table not accessible:', error.message)
+        } else {
+          console.error('Error loading court times:', error)
+        }
+        setVenueCourtTimes([])
+      } else {
+        setVenueCourtTimes(data || [])
+      }
+    } catch (error: any) {
+      // Handle network errors and other exceptions
+      console.error('Error loading court times:', error)
+      setVenueCourtTimes([])
+    }
+  }
+
+  function formatTimeForDisplay(timeString: string): string {
+    // Convert TIME format (HH:MM:SS) to 12-hour format with AM/PM
+    try {
+      const [hours, minutes] = timeString.split(':')
+      const hour = parseInt(hours, 10)
+      const minute = parseInt(minutes, 10)
+      const date = new Date()
+      date.setHours(hour, minute, 0)
+      return format(date, 'h:mm a')
+    } catch {
+      return timeString
+    }
+  }
+
+  function formatTimeForInput(timeString: string): string {
+    // Convert TIME format (HH:MM:SS) to input format (HH:MM)
+    const [hours, minutes] = timeString.split(':')
+    return `${hours}:${minutes}`
+  }
+
 
   function resetForm() {
     setEventName('')
     setDate('')
     setTime('')
-    setDuration('')
+    setDuration('60')
     setLocation('')
     setDescription('')
-    setEventType('')
+    setEventType('other')
     setIsRecurring(false)
     setRecurrencePattern('weekly')
     setEndType('date')
     setEndDate('')
     setOccurrences('')
+    setCustomRecurrence({
+      interval: 1,
+      timeUnit: 'week',
+      selectedDays: [],
+    })
+    setSelectedVenueId(undefined)
+    setLocationMode('venue')
+    setVenueCourtTimes([])
+    setUseCourtTime(false)
   }
 
-  function generateRecurringDates(startDate: string, pattern: 'daily' | 'weekly' | 'custom', endDateStr?: string, numOccurrences?: number): string[] {
-    const dates: string[] = [startDate]
-    // Parse the date string properly to avoid timezone issues
-    // parseISO handles 'yyyy-MM-dd' format correctly in local time
-    const start = parseISO(startDate)
-    let current = new Date(start)
-    let count = 1
-
-    if (endDateStr) {
-      const end = parseISO(endDateStr)
-      while (current < end) {
-        if (pattern === 'daily') {
-          current = addDays(current, 1)
-        } else if (pattern === 'weekly') {
-          current = addWeeks(current, 1)
-        }
-        // For custom, we'll handle separately if needed
-        if (current <= end) {
-          dates.push(format(current, 'yyyy-MM-dd'))
-        }
-      }
-    } else if (numOccurrences) {
-      while (count < numOccurrences) {
-        if (pattern === 'daily') {
-          current = addDays(current, 1)
-        } else if (pattern === 'weekly') {
-          current = addWeeks(current, 1)
-        }
-        dates.push(format(current, 'yyyy-MM-dd'))
-        count++
-      }
-    }
-
-    return dates
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
-    if (!eventName || !date || !time) {
+    if (!selectedTeamId) {
       toast({
         title: 'Error',
-        description: 'Please fill in all required fields (Event Name, Date, Time)',
+        description: 'Please select a team',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!eventName || !date || !time || !eventType) {
+      toast({
+        title: 'Error',
+        description: 'Please fill in all required fields (Event Name, Date, Time, Event Type)',
         variant: 'destructive',
       })
       return
@@ -174,7 +279,7 @@ export function AddEventDialog({
       const { data: teamData } = await supabase
         .from('teams')
         .select('captain_id, co_captain_id')
-        .eq('id', teamId)
+        .eq('id', selectedTeamId)
         .single()
 
       if (!teamData || (teamData.captain_id !== user.id && teamData.co_captain_id !== user.id)) {
@@ -192,8 +297,10 @@ export function AddEventDialog({
         ? generateRecurringDates(
             date,
             recurrencePattern,
+            endType,
             endType === 'date' ? endDate : undefined,
-            endType === 'occurrences' ? parseInt(occurrences) : undefined
+            endType === 'occurrences' ? parseInt(occurrences) : undefined,
+            recurrencePattern === 'custom' ? customRecurrence : undefined
           )
         : [date]
 
@@ -204,11 +311,11 @@ export function AddEventDialog({
       // Build event objects conditionally based on whether recurrence columns exist
       const eventsToCreate = dates.map((eventDate, index) => {
         const baseEvent: any = {
-          team_id: teamId,
+          team_id: selectedTeamId,
           event_name: eventName,
           date: eventDate,
           time,
-          duration: duration ? parseInt(duration) : null,
+          duration: duration ? parseInt(duration) : 60,
           location: location || null,
           description: description || null,
           event_type: eventType || null,
@@ -222,8 +329,11 @@ export function AddEventDialog({
           baseEvent.recurrence_pattern = recurrencePattern
           if (endType === 'date') {
             baseEvent.recurrence_end_date = endDate
-          } else {
+          } else if (endType === 'occurrences') {
             baseEvent.recurrence_occurrences = parseInt(occurrences)
+          }
+          if (recurrencePattern === 'custom' && customRecurrence) {
+            baseEvent.recurrence_custom_data = customRecurrence
           }
         }
 
@@ -280,6 +390,31 @@ export function AddEventDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 py-4">
+          {/* Team Selection (only show if multiple teams available) */}
+          {availableTeams.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="teamSelect">
+                Team <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={selectedTeamId}
+                onValueChange={setSelectedTeamId}
+                required
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a team" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableTeams.map((team) => (
+                    <SelectItem key={team.id} value={team.id}>
+                      {team.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           {/* Event Name */}
           <div className="space-y-2">
             <Label htmlFor="eventName">
@@ -296,13 +431,16 @@ export function AddEventDialog({
 
           {/* Event Type */}
           <div className="space-y-2">
-            <Label htmlFor="eventType">Event Type</Label>
+            <Label htmlFor="eventType">
+              Event Type <span className="text-destructive">*</span>
+            </Label>
             <Select
               value={eventType}
               onValueChange={(value) => setEventType(value as EventType)}
+              required
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select event type (optional)" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {getEventTypes().map((type) => (
@@ -334,74 +472,174 @@ export function AddEventDialog({
               <Label>
                 Time <span className="text-destructive">*</span>
               </Label>
-              <div className="flex gap-2">
-                <Select
-                  value={time.split(':')[0] || ''}
-                  onValueChange={(hour) => {
-                    const minute = time.split(':')[1] || '00'
-                    setTime(`${hour}:${minute}`)
-                  }}
-                >
-                  <SelectTrigger className="w-[100px]">
-                    <SelectValue placeholder="Hour" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.from({ length: 24 }, (_, i) => {
-                      const hour = i.toString().padStart(2, '0')
-                      return (
-                        <SelectItem key={hour} value={hour}>
-                          {hour}
+              {/* Court Start Times Picker (if venue has court times) */}
+              {venueCourtTimes.length > 0 && locationMode === 'venue' && (
+                <div className="space-y-2 mb-2">
+                  <Select
+                    value={(() => {
+                      if (!useCourtTime || !time) return 'custom'
+                      // Check if current time matches any court time
+                      const matchingCourtTime = venueCourtTimes.find(ct => formatTimeForInput(ct.start_time) === time)
+                      return matchingCourtTime ? time : 'custom'
+                    })()}
+                    onValueChange={(value) => {
+                      if (value === 'custom') {
+                        setUseCourtTime(false)
+                      } else {
+                        setUseCourtTime(true)
+                        setTime(value) // value is already in HH:MM format
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select court start time or custom" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="custom">Custom Time</SelectItem>
+                      {venueCourtTimes.map((courtTime) => {
+                        const timeValue = formatTimeForInput(courtTime.start_time)
+                        return (
+                          <SelectItem key={courtTime.id} value={timeValue}>
+                            {formatTimeForDisplay(courtTime.start_time)}
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {(!venueCourtTimes.length || locationMode === 'custom' || !useCourtTime) && (
+                <div className="flex gap-2">
+                  <Select
+                    value={(() => {
+                      const [hour, minute] = time.split(':')
+                      const hourNum = parseInt(hour || '0')
+                      const displayHour = hourNum === 0 ? 12 : hourNum > 12 ? hourNum - 12 : hourNum
+                      return displayHour.toString()
+                    })()}
+                    onValueChange={(hourStr) => {
+                      const [currentHour, minute] = time.split(':')
+                      const currentHourNum = parseInt(currentHour || '0')
+                      const isPM = currentHourNum >= 12
+                      const hourNum = parseInt(hourStr)
+                      let newHour = hourNum
+                      if (hourNum === 12) {
+                        newHour = isPM ? 12 : 0
+                      } else {
+                        newHour = isPM ? hourNum + 12 : hourNum
+                      }
+                      setTime(`${newHour.toString().padStart(2, '0')}:${minute || '00'}`)
+                      setUseCourtTime(false)
+                    }}
+                  >
+                    <SelectTrigger className="w-[100px]">
+                      <SelectValue placeholder="Hour" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const hour = i + 1
+                        return (
+                          <SelectItem key={hour} value={hour.toString()}>
+                            {hour}
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <span className="flex items-center">:</span>
+                  <Select
+                    value={time.split(':')[1] || ''}
+                    onValueChange={(minute) => {
+                      const hour = time.split(':')[0] || '00'
+                      setTime(`${hour}:${minute}`)
+                      setUseCourtTime(false)
+                    }}
+                  >
+                    <SelectTrigger className="w-[100px]">
+                      <SelectValue placeholder="Min" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map((minute) => (
+                        <SelectItem key={minute} value={minute}>
+                          {minute}
                         </SelectItem>
-                      )
-                    })}
-                  </SelectContent>
-                </Select>
-                <span className="flex items-center">:</span>
-                <Select
-                  value={time.split(':')[1] || ''}
-                  onValueChange={(minute) => {
-                    const hour = time.split(':')[0] || '00'
-                    setTime(`${hour}:${minute}`)
-                  }}
-                >
-                  <SelectTrigger className="w-[100px]">
-                    <SelectValue placeholder="Min" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map((minute) => (
-                      <SelectItem key={minute} value={minute}>
-                        {minute}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={(() => {
+                      const hour = parseInt(time.split(':')[0] || '0')
+                      return hour >= 12 ? 'PM' : 'AM'
+                    })()}
+                    onValueChange={(ampm) => {
+                      const [hour, minute] = time.split(':')
+                      const hourNum = parseInt(hour || '0')
+                      let newHour = hourNum
+                      if (ampm === 'PM' && hourNum < 12) {
+                        newHour = hourNum + 12
+                      } else if (ampm === 'AM' && hourNum >= 12) {
+                        newHour = hourNum === 12 ? 0 : hourNum - 12
+                      }
+                      setTime(`${newHour.toString().padStart(2, '0')}:${minute || '00'}`)
+                      setUseCourtTime(false)
+                    }}
+                  >
+                    <SelectTrigger className="w-[80px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="AM">AM</SelectItem>
+                      <SelectItem value="PM">PM</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Duration */}
           <div className="space-y-2">
             <Label htmlFor="duration">Duration (minutes)</Label>
-            <Input
-              id="duration"
-              type="number"
-              min="1"
-              placeholder="e.g., 60, 90, 120"
+            <Select
               value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-            />
+              onValueChange={setDuration}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 25 }, (_, i) => {
+                  const minutes = (i + 1) * 5 // 5, 10, 15, ... 125
+                  return (
+                    <SelectItem key={minutes} value={minutes.toString()}>
+                      {minutes} minutes
+                    </SelectItem>
+                  )
+                })}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Location */}
-          <div className="space-y-2">
-            <Label htmlFor="location">Location</Label>
-            <Input
-              id="location"
-              placeholder="Court name, restaurant, etc."
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-            />
-          </div>
+          <LocationSelector
+            locationMode={locationMode}
+            onLocationModeChange={setLocationMode}
+            selectedVenueId={selectedVenueId}
+            onVenueChange={setSelectedVenueId}
+            customLocation={location}
+            onCustomLocationChange={setLocation}
+            teamId={selectedTeamId}
+            canCreateVenue={isCaptain}
+            onVenueSelected={(venue) => {
+              if (venue) {
+                setLocation(venue.address ? `${venue.name} - ${venue.address}` : venue.name)
+                // Set duration from venue's default court time if available
+                if (venue.default_court_time) {
+                  setDuration(venue.default_court_time.toString())
+                }
+              }
+            }}
+          />
 
           {/* Description */}
           <div className="space-y-2">
@@ -428,84 +666,22 @@ export function AddEventDialog({
               </Label>
             </div>
 
-            {isRecurring && (
-              <div className="space-y-4 pl-6 border-l-2">
-                {/* Recurrence Pattern */}
-                <div className="space-y-2">
-                  <Label htmlFor="recurrencePattern">Recurrence Pattern</Label>
-                  <Select
-                    value={recurrencePattern}
-                    onValueChange={(value) => setRecurrencePattern(value as 'daily' | 'weekly' | 'custom')}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* End Type Selection */}
-                <div className="space-y-2">
-                  <Label>End Recurrence</Label>
-                  <Select value={endType} onValueChange={(value) => setEndType(value as 'date' | 'occurrences')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="date">On a specific date</SelectItem>
-                      <SelectItem value="occurrences">After number of occurrences</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* End Date or Occurrences */}
-                {endType === 'date' ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="endDate">
-                      End Date <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      id="endDate"
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      min={date}
-                      required
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Label htmlFor="occurrences">
-                      Number of Occurrences <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      id="occurrences"
-                      type="number"
-                      min="2"
-                      value={occurrences}
-                      onChange={(e) => setOccurrences(e.target.value)}
-                      placeholder="e.g., 10"
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      The event will repeat {occurrences ? `${occurrences} times` : 'multiple times'} starting from {date}
-                    </p>
-                  </div>
-                )}
-
-                {recurrencePattern === 'custom' && (
-                  <div className="p-3 bg-muted rounded-md">
-                    <p className="text-sm text-muted-foreground">
-                      Custom recurrence patterns are coming soon. For now, please use Daily or Weekly.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+            <RecurrenceSelector
+              isRecurring={isRecurring}
+              onRecurringChange={setIsRecurring}
+              pattern={recurrencePattern}
+              onPatternChange={setRecurrencePattern}
+              endType={endType}
+              onEndTypeChange={setEndType}
+              endDate={endDate}
+              onEndDateChange={setEndDate}
+              occurrences={occurrences}
+              onOccurrencesChange={setOccurrences}
+              customRecurrence={customRecurrence}
+              onCustomRecurrenceChange={setCustomRecurrence}
+              startDate={date}
+              showNeverOption={false}
+            />
           </div>
 
           <DialogFooter>
@@ -522,6 +698,7 @@ export function AddEventDialog({
             </Button>
           </DialogFooter>
         </form>
+
       </DialogContent>
     </Dialog>
   )

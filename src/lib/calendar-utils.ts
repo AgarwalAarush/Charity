@@ -10,17 +10,29 @@ export interface CalendarDay {
 }
 
 export type EventType = 'practice' | 'warmup' | 'fun' | 'social' | 'other'
+export type ActivityType = 'scrimmage' | 'lesson' | 'class' | 'flex_league' | 'booked_court' | 'other'
 
 export interface CalendarItem {
   id: string
-  type: 'match' | 'event'
+  type: 'match' | 'event' | 'personal_activity'
   date: string // YYYY-MM-DD
   time: string
-  teamId: string
-  teamName: string
-  name: string // opponent name for match, event name for event
-  availabilityStatus?: 'available' | 'unavailable' | 'maybe' | 'late'
-  eventType?: EventType // Only for events
+  duration?: number | null // Duration in minutes (for events)
+  teamId?: string // Optional for personal activities
+  teamName?: string // Optional for personal activities
+  teamColor?: string | null // Saved team color from database
+  name: string // opponent name for match, event name for event, title for personal activity
+  is_home?: boolean // Only for matches
+  availabilityStatus?: 'available' | 'unavailable' | 'maybe' | 'last_resort'
+  eventType?: EventType // Only for team events
+  activityType?: ActivityType // Only for personal activities
+  creatorId?: string // Only for personal activities
+  availabilitySummary?: {
+    available: number
+    maybe: number
+    unavailable: number
+    total: number
+  }
 }
 
 /**

@@ -58,6 +58,35 @@ export async function GET(request: Request) {
         console.log('Profile already exists, skipping creation')
       }
 
+      // Link roster members with matching email to this user account
+      // This handles the case where a captain added a player before they created an account
+      try {
+        // Use the database function to link roster members
+        const { data: linkedCount, error: functionError } = await supabase
+          .rpc('link_roster_members_to_user', { target_user_id: data.user.id })
+
+        if (!functionError && linkedCount && linkedCount > 0) {
+          console.log(`Linked ${linkedCount} roster member(s) to user ${data.user.id}`)
+        }
+      } catch (linkError) {
+        // Don't fail auth if linking fails - user can still log in
+        console.error('Error linking roster members in callback:', linkError)
+      }
+
+      // Link event invitations with matching email to this user account
+      // This handles the case where someone was invited to an event before they created an account
+      try {
+        const { data: linkedInvitations, error: invitationError } = await supabase
+          .rpc('link_event_invitations_to_user', { target_user_id: data.user.id })
+
+        if (!invitationError && linkedInvitations && linkedInvitations > 0) {
+          console.log(`Linked ${linkedInvitations} event invitation(s) to user ${data.user.id}`)
+        }
+      } catch (invitationLinkError) {
+        // Don't fail auth if linking fails - user can still log in
+        console.error('Error linking event invitations in callback:', invitationLinkError)
+      }
+
       return NextResponse.redirect(`${origin}${next}`)
     }
   }

@@ -1,23 +1,48 @@
-import { EventType } from './calendar-utils'
+import { EventType, ActivityType } from './calendar-utils'
 import { cn } from './utils'
 
 /**
  * Get the color classes for an event type badge
+ * This is the centralized styling - all badges should use this
  */
 export function getEventTypeBadgeClass(eventType?: EventType): string {
-  switch (eventType) {
+  // Normalize 'fun' to 'social' for consistent styling
+  const normalizedType = eventType === 'fun' ? 'social' : eventType
+  switch (normalizedType) {
     case 'practice':
-      return 'bg-blue-100 text-blue-800 border-blue-300 hover:bg-blue-200'
+      return '!bg-blue-600 !text-white'
     case 'warmup':
-      return 'bg-orange-100 text-orange-800 border-orange-300 hover:bg-orange-200'
-    case 'fun':
-      return 'bg-purple-100 text-purple-800 border-purple-300 hover:bg-purple-200'
+      return '!bg-orange-500 !text-white'
     case 'social':
-      return 'bg-pink-100 text-pink-800 border-pink-300 hover:bg-pink-200'
+      return '!bg-pink-500 !text-white'
     case 'other':
-      return 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'
+      return '!bg-purple-500 !text-white'
     default:
-      return 'bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200'
+      return '!bg-purple-500 !text-white'
+  }
+}
+
+/**
+ * Get the color classes for an activity type badge
+ * Distinct colors from event types to differentiate personal activities
+ * Uses !important flags to ensure colors override default badge variants
+ */
+export function getActivityTypeBadgeClass(activityType?: ActivityType): string {
+  switch (activityType) {
+    case 'scrimmage':
+      return '!bg-green-600 !text-white'
+    case 'lesson':
+      return '!bg-indigo-600 !text-white'
+    case 'class':
+      return '!bg-teal-600 !text-white'
+    case 'flex_league':
+      return '!bg-amber-600 !text-white'
+    case 'booked_court':
+      return '!bg-violet-600 !text-white'
+    case 'other':
+      return '!bg-gray-600 !text-white'
+    default:
+      return '!bg-gray-600 !text-white'
   }
 }
 
@@ -30,8 +55,6 @@ export function getEventTypeLabel(eventType?: EventType): string {
       return 'Practice'
     case 'warmup':
       return 'Warmup'
-    case 'fun':
-      return 'Fun'
     case 'social':
       return 'Social'
     case 'other':
@@ -42,15 +65,55 @@ export function getEventTypeLabel(eventType?: EventType): string {
 }
 
 /**
+ * Get the display label for an activity type
+ */
+export function getActivityTypeLabel(activityType?: ActivityType): string {
+  switch (activityType) {
+    case 'scrimmage':
+      return 'Scrimmage'
+    case 'lesson':
+      return 'Lesson'
+    case 'class':
+      return 'Class'
+    case 'flex_league':
+      return 'Flex League'
+    case 'booked_court':
+      return 'Booked Court'
+    case 'other':
+      return 'Other'
+    default:
+      return 'Activity'
+  }
+}
+
+/**
  * Get all available event types
  */
 export function getEventTypes(): { value: EventType; label: string }[] {
   return [
     { value: 'practice', label: 'Practice' },
     { value: 'warmup', label: 'Warmup' },
-    { value: 'fun', label: 'Fun' },
     { value: 'social', label: 'Social' },
     { value: 'other', label: 'Other' },
   ]
 }
+
+/**
+ * Get all available activity types
+ */
+export function getActivityTypes(): { value: ActivityType; label: string }[] {
+  return [
+    { value: 'scrimmage', label: 'Scrimmage' },
+    { value: 'lesson', label: 'Lesson' },
+    { value: 'class', label: 'Class' },
+    { value: 'flex_league', label: 'Flex League' },
+    { value: 'booked_court', label: 'Booked Court' },
+    { value: 'other', label: 'Other' },
+  ]
+}
+
+
+
+
+
 

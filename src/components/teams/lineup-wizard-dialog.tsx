@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Wand2, Loader2 } from 'lucide-react'
 
 interface PlayerWithAvailability extends RosterMember {
-  availability?: 'available' | 'unavailable' | 'maybe' | 'late'
+  availability?: 'available' | 'unavailable' | 'maybe' | 'last_resort'
 }
 
 interface PairSuggestion {
@@ -50,7 +50,7 @@ export function LineupWizardDialog({
 
     // Filter only available players
     const eligiblePlayers = availablePlayers.filter(
-      p => p.availability === 'available' || p.availability === 'maybe' || p.availability === 'late'
+      p => p.availability === 'available' || p.availability === 'maybe' || p.availability === 'last_resort'
     )
 
     // Generate all possible pairs

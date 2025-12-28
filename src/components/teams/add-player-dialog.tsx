@@ -22,7 +22,9 @@ import {
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
-import { Loader2, UserCheck, UserX } from 'lucide-react'
+import { Loader2, UserCheck, UserX, Search, Users } from 'lucide-react'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 interface FoundUser {
   id: string
@@ -39,6 +41,7 @@ interface AddPlayerDialogProps {
 }
 
 export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlayerDialogProps) {
+  const [mode, setMode] = useState<'search' | 'manual'>('search') // 'search' for existing users, 'manual' for new
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -48,18 +51,164 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
   const [checkingEmail, setCheckingEmail] = useState(false)
   const [foundUser, setFoundUser] = useState<FoundUser | null>(null)
   const [emailChecked, setEmailChecked] = useState(false)
+  
+  // Search functionality
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<FoundUser[]>([])
+  const [searching, setSearching] = useState(false)
+  const [selectedUser, setSelectedUser] = useState<FoundUser | null>(null)
+  
   const { toast } = useToast()
-
-  // Check for existing user when email changes
+  
+  // Reset form when dialog opens/closes
   useEffect(() => {
-    if (email && email.includes('@')) {
+    if (!open) {
+      setMode('search')
+      setFullName('')
+      setEmail('')
+      setPhone('')
+      setNtrpRating('')
+      setRole('player')
+      setFoundUser(null)
+      setEmailChecked(false)
+      setSearchQuery('')
+      setSearchResults([])
+      setSelectedUser(null)
+    }
+  }, [open])
+
+  // Search for users when search query changes (debounced)
+  useEffect(() => {
+    if (mode === 'search' && searchQuery.trim().length >= 2) {
+      const timeoutId = setTimeout(() => {
+        searchUsers(searchQuery.trim())
+      }, 300) // Debounce 300ms
+      
+      return () => clearTimeout(timeoutId)
+    } else {
+      setSearchResults([])
+    }
+  }, [searchQuery, mode])
+  
+  // Check for existing user when email changes (manual mode)
+  useEffect(() => {
+    if (mode === 'manual' && email && email.includes('@')) {
       checkForExistingUser(email)
     } else {
       setFoundUser(null)
       setEmailChecked(false)
     }
-  }, [email])
+  }, [email, mode])
 
+  async function searchUsers(query: string) {
+    setSearching(true)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) {
+      setSearchResults([])
+      setSearching(false)
+      return
+    }
+    
+    const searchLower = query.toLowerCase()
+    const results: FoundUser[] = []
+    const seenUserIds = new Set<string>()
+    const seenEmails = new Set<string>()
+    
+    // First, search profiles (all app users)
+    const { data: profiles, error: profilesError } = await supabase
+      .from('profiles')
+      .select('id, email, full_name, ntrp_rating')
+      .or(`full_name.ilike.%${searchLower}%,email.ilike.%${searchLower}%`)
+      .limit(20)
+      .order('full_name', { ascending: true, nullsFirst: false })
+    
+    if (!profilesError && profiles) {
+      profiles.forEach(profile => {
+        if (profile.id && profile.email) {
+          results.push(profile)
+          seenUserIds.add(profile.id)
+          seenEmails.add(profile.email.toLowerCase())
+        }
+      })
+    }
+    
+    // Also search roster members from user's teams (includes non-app users)
+    // Get all teams the current user is on
+    const { data: userRosterMemberships } = await supabase
+      .from('roster_members')
+      .select('team_id')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+    
+    if (userRosterMemberships && userRosterMemberships.length > 0) {
+      const userTeamIds = userRosterMemberships.map(rm => rm.team_id)
+      
+      // Search roster members from user's teams
+      const { data: rosterMembers, error: rosterError } = await supabase
+        .from('roster_members')
+        .select('user_id, email, full_name, ntrp_rating, profiles(id, email, full_name, ntrp_rating)')
+        .in('team_id', userTeamIds)
+        .eq('is_active', true)
+        .or(`full_name.ilike.%${searchLower}%,email.ilike.%${searchLower}%`)
+        .limit(20)
+      
+      if (!rosterError && rosterMembers) {
+        rosterMembers.forEach((rm: any) => {
+          const email = rm.email?.toLowerCase() || ''
+          const profile = Array.isArray(rm.profiles) ? rm.profiles[0] : rm.profiles
+          
+          // Skip if already in results (from profiles search)
+          if (rm.user_id && seenUserIds.has(rm.user_id)) {
+            return
+          }
+          if (email && seenEmails.has(email)) {
+            return
+          }
+          
+          // Prefer profile data if available, otherwise use roster member data
+          if (profile) {
+            // User has a profile - should already be in results from profiles search
+            // But add if somehow missed
+            if (!seenUserIds.has(profile.id)) {
+              results.push({
+                id: profile.id,
+                email: profile.email,
+                full_name: profile.full_name,
+                ntrp_rating: profile.ntrp_rating,
+              })
+              seenUserIds.add(profile.id)
+              seenEmails.add(profile.email.toLowerCase())
+            }
+          } else if (rm.email) {
+            // Non-app user - add from roster member data
+            results.push({
+              id: rm.user_id || '', // May be null for non-app users, but we'll use email as identifier
+              email: rm.email,
+              full_name: rm.full_name,
+              ntrp_rating: rm.ntrp_rating,
+            })
+            if (rm.user_id) {
+              seenUserIds.add(rm.user_id)
+            }
+            seenEmails.add(email)
+          }
+        })
+      }
+    }
+    
+    // Sort results by name
+    results.sort((a, b) => {
+      const nameA = (a.full_name || a.email || '').toLowerCase()
+      const nameB = (b.full_name || b.email || '').toLowerCase()
+      return nameA.localeCompare(nameB)
+    })
+    
+    setSearchResults(results.slice(0, 20))
+    setSearching(false)
+  }
+  
   async function checkForExistingUser(emailToCheck: string) {
     setCheckingEmail(true)
     const supabase = createClient()
@@ -68,7 +217,7 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
     const { data: profile } = await supabase
       .from('profiles')
       .select('id, email, full_name, ntrp_rating')
-      .eq('email', emailToCheck)
+      .eq('email', emailToCheck.toLowerCase().trim())
       .maybeSingle()
 
     if (profile) {
@@ -86,6 +235,16 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
 
     setEmailChecked(true)
     setCheckingEmail(false)
+  }
+  
+  function handleSelectUser(user: FoundUser) {
+    setSelectedUser(user)
+    setFoundUser(user)
+    setEmail(user.email)
+    setFullName(user.full_name || '')
+    setNtrpRating(user.ntrp_rating?.toString() || '')
+    setSearchQuery('')
+    setSearchResults([])
   }
 
   async function handleAdd(e: React.FormEvent) {
@@ -105,66 +264,90 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
       return
     }
 
-    // If user exists in app, send invitation
-    if (foundUser) {
-      // Check if user is already on roster
+    // Determine which user to use (selected from search or found by email)
+    const userToAdd = selectedUser || foundUser
+    
+    // If user exists in app, add directly to roster
+    if (userToAdd && userToAdd.id) {
+      // Check if user is already on roster (including inactive)
       const { data: existingMember } = await supabase
         .from('roster_members')
-        .select('id')
+        .select('id, is_active')
         .eq('team_id', teamId)
-        .eq('user_id', foundUser.id)
+        .eq('user_id', userToAdd.id)
         .maybeSingle()
 
       if (existingMember) {
-        toast({
-          title: 'Already on roster',
-          description: `${foundUser.full_name || foundUser.email} is already on this team`,
-          variant: 'destructive',
-        })
+        if (existingMember.is_active) {
+          toast({
+            title: 'Already on roster',
+            description: `${userToAdd.full_name || userToAdd.email} is already on this team`,
+            variant: 'destructive',
+          })
+        } else {
+          // Reactivate inactive member
+          const { error: reactivateError } = await supabase
+            .from('roster_members')
+            .update({
+              is_active: true,
+              full_name: fullName || userToAdd.full_name || '',
+              email: email || userToAdd.email || '',
+              phone: phone || null,
+              ntrp_rating: ntrpRating ? parseFloat(ntrpRating) : userToAdd.ntrp_rating || null,
+              role: role || 'player',
+            })
+            .eq('id', existingMember.id)
+
+          if (reactivateError) {
+            toast({
+              title: 'Error',
+              description: reactivateError.message,
+              variant: 'destructive',
+            })
+          } else {
+            toast({
+              title: 'Player added',
+              description: `${userToAdd.full_name || userToAdd.email} has been added to the roster`,
+            })
+            setFullName('')
+            setEmail('')
+            setPhone('')
+            setNtrpRating('')
+            setRole('player')
+            setFoundUser(null)
+            setSelectedUser(null)
+            setEmailChecked(false)
+            onAdded()
+          }
+        }
         setLoading(false)
         return
       }
 
-      // Check for pending invitation
-      const { data: existingInvite } = await supabase
-        .from('team_invitations')
-        .select('id')
-        .eq('team_id', teamId)
-        .eq('invitee_id', foundUser.id)
-        .eq('status', 'pending')
-        .maybeSingle()
-
-      if (existingInvite) {
-        toast({
-          title: 'Already invited',
-          description: `${foundUser.full_name || foundUser.email} has a pending invitation`,
-          variant: 'destructive',
-        })
-        setLoading(false)
-        return
-      }
-
-      // Create invitation
-      const { error: inviteError } = await supabase
-        .from('team_invitations')
+      // Add user directly to roster
+      const { error: insertError } = await supabase
+        .from('roster_members')
         .insert({
           team_id: teamId,
-          inviter_id: user.id,
-          invitee_id: foundUser.id,
-          invitee_email: foundUser.email,
-          status: 'pending',
+          user_id: userToAdd.id,
+          full_name: fullName || userToAdd.full_name || '',
+          email: email || userToAdd.email || '',
+          phone: phone || null,
+          ntrp_rating: ntrpRating ? parseFloat(ntrpRating) : userToAdd.ntrp_rating || null,
+          role: role || 'player',
+          is_active: true,
         })
 
-      if (inviteError) {
+      if (insertError) {
         toast({
-          title: 'Error sending invitation',
-          description: inviteError.message,
+          title: 'Error adding player',
+          description: insertError.message,
           variant: 'destructive',
         })
       } else {
         toast({
-          title: 'Invitation sent!',
-          description: `${foundUser.full_name || foundUser.email} will see the invitation in their Messages tab`,
+          title: 'Player added!',
+          description: `${userToAdd.full_name || userToAdd.email} has been added to the roster`,
         })
         setFullName('')
         setEmail('')
@@ -172,11 +355,134 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
         setNtrpRating('')
         setRole('player')
         setFoundUser(null)
+        setSelectedUser(null)
         setEmailChecked(false)
         onAdded()
       }
+      setLoading(false)
+      return
     } else {
       // Fall back to adding as non-user roster member
+      // First check if email already exists on roster (including inactive members)
+      if (email) {
+        const normalizedEmail = email.toLowerCase().trim()
+        
+        // Check for existing roster member by email (including inactive)
+        const { data: existingMemberByEmail } = await supabase
+          .from('roster_members')
+          .select('id, full_name, email, user_id, is_active')
+          .eq('team_id', teamId)
+          .ilike('email', normalizedEmail)
+          .maybeSingle()
+
+        if (existingMemberByEmail) {
+          if (existingMemberByEmail.is_active) {
+            toast({
+              title: 'Already on roster',
+              description: `${existingMemberByEmail.full_name || existingMemberByEmail.email || email} is already on this team`,
+              variant: 'destructive',
+            })
+          } else {
+            // Inactive member exists - reactivate them instead
+            const { error: reactivateError } = await supabase
+              .from('roster_members')
+              .update({
+                is_active: true,
+                full_name: fullName || existingMemberByEmail.full_name,
+                phone: phone || existingMemberByEmail.phone,
+                ntrp_rating: ntrpRating ? parseFloat(ntrpRating) : existingMemberByEmail.ntrp_rating,
+                role: role || existingMemberByEmail.role,
+              })
+              .eq('id', existingMemberByEmail.id)
+
+            if (reactivateError) {
+              toast({
+                title: 'Error',
+                description: reactivateError.message,
+                variant: 'destructive',
+              })
+            } else {
+              toast({
+                title: 'Player reactivated',
+                description: `${fullName || existingMemberByEmail.full_name} has been added back to the roster`,
+              })
+              setFullName('')
+              setEmail('')
+              setPhone('')
+              setNtrpRating('')
+              setRole('player')
+              setFoundUser(null)
+              setSelectedUser(null)
+              setEmailChecked(false)
+              onAdded()
+            }
+            setLoading(false)
+            return
+          }
+          setLoading(false)
+          return
+        }
+        
+        // Also check if there's a user with this email who is already on the roster
+        const { data: profileWithEmail } = await supabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('email', normalizedEmail)
+          .maybeSingle()
+        
+        if (profileWithEmail) {
+          const { data: existingMemberByUserId } = await supabase
+            .from('roster_members')
+            .select('id, full_name, email, is_active')
+            .eq('team_id', teamId)
+            .eq('user_id', profileWithEmail.id)
+            .maybeSingle()
+          
+          if (existingMemberByUserId) {
+            if (existingMemberByUserId.is_active) {
+              toast({
+                title: 'Already on roster',
+                description: `${profileWithEmail.full_name || profileWithEmail.email} is already on this team`,
+                variant: 'destructive',
+              })
+            } else {
+              // Inactive member exists - reactivate them
+              const { error: reactivateError } = await supabase
+                .from('roster_members')
+                .update({
+                  is_active: true,
+                  role: role || existingMemberByUserId.role,
+                })
+                .eq('id', existingMemberByUserId.id)
+
+              if (reactivateError) {
+                toast({
+                  title: 'Error',
+                  description: reactivateError.message,
+                  variant: 'destructive',
+                })
+              } else {
+                toast({
+                  title: 'Player reactivated',
+                  description: `${profileWithEmail.full_name || profileWithEmail.email} has been added back to the roster`,
+                })
+                setFullName('')
+                setEmail('')
+                setPhone('')
+                setNtrpRating('')
+                setRole('player')
+                setFoundUser(null)
+                setSelectedUser(null)
+                setEmailChecked(false)
+                onAdded()
+              }
+            }
+            setLoading(false)
+            return
+          }
+        }
+      }
+
       const { error } = await supabase.from('roster_members').insert({
         team_id: teamId,
         full_name: fullName,
@@ -187,11 +493,20 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
       })
 
       if (error) {
-        toast({
-          title: 'Error',
-          description: error.message,
-          variant: 'destructive',
-        })
+        // Check if it's a duplicate key error
+        if (error.code === '23505' || error.message.includes('duplicate key')) {
+          toast({
+            title: 'Already on roster',
+            description: `${fullName || email} is already on this team`,
+            variant: 'destructive',
+          })
+        } else {
+          toast({
+            title: 'Error',
+            description: error.message,
+            variant: 'destructive',
+          })
+        }
       } else {
         toast({
           title: 'Player added',
@@ -215,54 +530,179 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{foundUser ? 'Send Invitation' : 'Add Player'}</DialogTitle>
+          <DialogTitle>Add Player to Roster</DialogTitle>
           <DialogDescription>
-            {foundUser 
-              ? 'Send a team invitation to this user'
-              : 'Add a new player to your team roster'
-            }
+            Search for existing users or add a new player manually
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleAdd}>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email *</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="john@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-              {checkingEmail && (
-                <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Checking for user...
-                </p>
-              )}
-              {emailChecked && foundUser && (
-                <div className="flex items-center gap-2 p-2 bg-green-50 dark:bg-green-950 rounded-md">
-                  <UserCheck className="h-4 w-4 text-green-600" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                      User found: {foundUser.full_name || foundUser.email}
-                    </p>
-                    <p className="text-xs text-green-700 dark:text-green-300">
-                      Will send invitation instead of adding directly
-                    </p>
+            <Tabs value={mode} onValueChange={(v) => setMode(v as 'search' | 'manual')}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="search">
+                  <Search className="h-4 w-4 mr-2" />
+                  Search Existing
+                </TabsTrigger>
+                <TabsTrigger value="manual">
+                  <Users className="h-4 w-4 mr-2" />
+                  Add New
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="search" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label>Search for User</Label>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by name or email..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8"
+                    />
                   </div>
+                  {searching && (
+                    <div className="flex items-center justify-center p-4">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                  )}
+                  
+                  {selectedUser && (
+                    <div className="flex items-center gap-3 p-3 bg-green-50 dark:bg-green-950 rounded-md border border-green-200 dark:border-green-800">
+                      <UserCheck className="h-5 w-5 text-green-600 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                          Selected: {selectedUser.full_name || selectedUser.email}
+                        </p>
+                        <p className="text-xs text-green-700 dark:text-green-300">
+                          {selectedUser.email}
+                          {selectedUser.ntrp_rating && ` • NTRP ${selectedUser.ntrp_rating}`}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedUser(null)
+                          setFoundUser(null)
+                          setEmail('')
+                          setFullName('')
+                          setNtrpRating('')
+                        }}
+                      >
+                        Change
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {!selectedUser && searchResults.length > 0 && (
+                    <div className="border rounded-md p-2 max-h-60 overflow-y-auto">
+                      <div className="space-y-1">
+                        {searchResults.map((user) => (
+                          <div
+                            key={user.id}
+                            onClick={() => handleSelectUser(user)}
+                            className="flex items-center gap-3 p-2 rounded-md hover:bg-accent cursor-pointer transition-colors"
+                          >
+                            <Avatar className="h-8 w-8">
+                              <AvatarFallback className="text-xs">
+                                {(user.full_name || user.email)
+                                  .split(' ')
+                                  .map(n => n[0])
+                                  .join('')
+                                  .toUpperCase()
+                                  .slice(0, 2)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {user.full_name || 'No name'}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {user.email}
+                              </p>
+                            </div>
+                            {user.ntrp_rating && (
+                              <Badge variant="secondary" className="text-xs">
+                                NTRP {user.ntrp_rating}
+                              </Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {!selectedUser && searchQuery.length >= 2 && !searching && searchResults.length === 0 && (
+                    <div className="text-center py-4 text-sm text-muted-foreground">
+                      No users found matching "{searchQuery}"
+                    </div>
+                  )}
+                  
+                  {!selectedUser && searchQuery.length < 2 && (
+                    <div className="text-center py-4 text-sm text-muted-foreground">
+                      Type at least 2 characters to search
+                    </div>
+                  )}
                 </div>
-              )}
-              {emailChecked && !foundUser && email && (
-                <div className="flex items-center gap-2 p-2 bg-blue-50 dark:bg-blue-950 rounded-md">
-                  <UserX className="h-4 w-4 text-blue-600" />
-                  <p className="text-xs text-blue-900 dark:text-blue-100">
-                    No user found - will add as roster member
-                  </p>
+                
+                {selectedUser && (
+                  <div className="space-y-2">
+                    <Label htmlFor="role-search">Role</Label>
+                    <Select value={role} onValueChange={(v) => setRole(v as 'captain' | 'co-captain' | 'player')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="player">Player</SelectItem>
+                        <SelectItem value="co-captain">Co-Captain</SelectItem>
+                        <SelectItem value="captain">Captain</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="manual" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="john@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                  {checkingEmail && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Checking for user...
+                    </p>
+                  )}
+                  {emailChecked && foundUser && (
+                    <div className="flex items-center gap-2 p-2 bg-green-50 dark:bg-green-950 rounded-md">
+                      <UserCheck className="h-4 w-4 text-green-600" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                          User found: {foundUser.full_name || foundUser.email}
+                        </p>
+                        <p className="text-xs text-green-700 dark:text-green-300">
+                          Will send invitation instead of adding directly
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {emailChecked && !foundUser && email && (
+                    <div className="flex items-center gap-2 p-2 bg-blue-50 dark:bg-blue-950 rounded-md">
+                      <UserX className="h-4 w-4 text-blue-600" />
+                      <p className="text-xs text-blue-900 dark:text-blue-100">
+                        No user found - will add as roster member
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
             <div className="space-y-2">
               <Label htmlFor="fullName">Full Name *</Label>
               <Input
@@ -317,14 +757,27 @@ export function AddPlayerDialog({ open, onOpenChange, teamId, onAdded }: AddPlay
                 </Select>
               </div>
             </div>
+              </TabsContent>
+            </Tabs>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || !fullName || !email}>
+            <Button 
+              type="submit" 
+              disabled={
+                loading || 
+                (mode === 'search' && !selectedUser) ||
+                (mode === 'manual' && (!fullName || !email))
+              }
+            >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {foundUser ? 'Send Invitation' : 'Add Player'}
+              {mode === 'search' && selectedUser
+                ? 'Send Invitation'
+                : mode === 'manual' && foundUser
+                ? 'Send Invitation'
+                : 'Add Player'}
             </Button>
           </DialogFooter>
         </form>

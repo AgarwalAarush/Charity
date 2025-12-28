@@ -22,7 +22,9 @@ import {
   Plus,
   Loader2,
   ChevronRight,
-  Clock
+  Clock,
+  ArrowLeft,
+  Zap
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -56,11 +58,22 @@ export default function ProfilePage() {
       return
     }
 
-    const { data: profileData } = await supabase
+    const { data: profileData, error: profileError } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .single()
+
+    if (profileError) {
+      console.error('Error loading profile:', profileError)
+      toast({
+        title: 'Error loading profile',
+        description: profileError.message || 'Unable to load your profile. Please refresh the page.',
+        variant: 'destructive',
+      })
+      setLoading(false)
+      return
+    }
 
     if (profileData) {
       setProfile(profileData)
@@ -70,6 +83,12 @@ export default function ProfilePage() {
       setAvailabilityDefaults(
         (profileData.availability_defaults as Record<string, boolean>) || {}
       )
+    } else {
+      toast({
+        title: 'Profile not found',
+        description: 'Your profile could not be loaded. Please contact support.',
+        variant: 'destructive',
+      })
     }
 
     const { data: reservationsData } = await supabase
@@ -181,6 +200,14 @@ export default function ProfilePage() {
       <Header title="Profile" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
+
         {/* Profile Header */}
         <Card>
           <CardContent className="p-4">
@@ -340,6 +367,26 @@ export default function ProfilePage() {
                     <p className="font-medium text-sm">Default Availability</p>
                     <p className="text-xs text-muted-foreground">
                       Set your weekly time availability
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        {/* Activity Types Configuration */}
+        <Link href="/settings/activity-types">
+          <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Zap className="h-5 w-5 text-primary" />
+                  <div>
+                    <p className="font-medium text-sm">Activity Types</p>
+                    <p className="text-xs text-muted-foreground">
+                      Configure personal activity types
                     </p>
                   </div>
                 </div>

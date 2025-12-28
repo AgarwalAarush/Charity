@@ -8,11 +8,50 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { Event, RosterMember, Availability } from '@/types/database.types'
+// Types defined inline
+type Event = {
+  id: string
+  team_id: string
+  event_name: string
+  date: string
+  time: string
+  location?: string | null
+  description?: string | null
+  event_type?: string | null
+  duration?: number | null
+  recurrence_series_id?: string | null
+  recurrence_pattern?: string | null
+  recurrence_end_date?: string | null
+  recurrence_occurrences?: number | null
+  recurrence_original_date?: string | null
+  [key: string]: any
+}
+
+type RosterMember = {
+  id: string
+  team_id: string
+  user_id?: string | null
+  full_name: string
+  email?: string | null
+  phone?: string | null
+  ntrp_rating?: number | null
+  [key: string]: any
+}
+
+type Availability = {
+  id: string
+  roster_member_id: string
+  event_id?: string | null
+  match_id?: string | null
+  status: string
+  [key: string]: any
+}
 import { formatDate, formatTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 import { EditEventDialog } from '@/components/teams/edit-event-dialog'
+import { useIsSystemAdmin } from '@/hooks/use-is-system-admin'
 import {
   Select,
   SelectContent,
@@ -28,11 +67,28 @@ import {
   Check,
   X,
   HelpCircle,
-  Clock as LateClock,
   Trash2,
   Edit,
-  ChevronDown
+  ChevronDown,
+  Save,
+  XCircle,
+  Loader2,
+  Plus,
+  Timer,
+  ArrowLeft
 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface AttendeeInfo {
   rosterMember: RosterMember
@@ -45,21 +101,29 @@ export default function EventDetailPage() {
   const teamId = params.id as string
   const eventId = params.eventId as string
   const [event, setEvent] = useState<Event | null>(null)
+  const [teamName, setTeamName] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [isCaptain, setIsCaptain] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
+  const [initialEditScope, setInitialEditScope] = useState<'series' | 'single' | undefined>(undefined)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editedEvent, setEditedEvent] = useState<Partial<Event>>({})
+  const [saving, setSaving] = useState(false)
+  const [showDeleteAlert, setShowDeleteAlert] = useState(false)
+  const [showAvailabilityManager, setShowAvailabilityManager] = useState(false)
   const [myAvailability, setMyAvailability] = useState<Availability | null>(null)
   const [myRosterMemberId, setMyRosterMemberId] = useState<string | null>(null)
+  const { isAdmin: isSystemAdmin } = useIsSystemAdmin()
   const [attendees, setAttendees] = useState<{
     available: AttendeeInfo[]
     unavailable: AttendeeInfo[]
     maybe: AttendeeInfo[]
-    late: AttendeeInfo[]
+    unknown: AttendeeInfo[]
   }>({
     available: [],
     unavailable: [],
     maybe: [],
-    late: []
+    unknown: []
   })
   const { toast } = useToast()
 
@@ -75,16 +139,12 @@ export default function EventDetailPage() {
 
     const { data: eventData } = await supabase
       .from('events')
-      .select('*')
+      .select('*, teams!inner(id, name)')
       .eq('id', eventId)
       .single()
     
     // Note: recurrence_series_id and other recurrence fields may not exist in DB yet
     // They will be added via migration, but the code handles their absence gracefully
-
-    if (eventData) {
-      setEvent(eventData)
-    }
 
     // Check if current user is captain
     const { data: teamData } = await supabase
@@ -95,6 +155,19 @@ export default function EventDetailPage() {
 
     if (teamData && user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
       setIsCaptain(true)
+    }
+
+    if (eventData) {
+      setEvent(eventData)
+      setEditedEvent({
+        event_name: eventData.event_name,
+        date: eventData.date,
+        time: eventData.time,
+        duration: (eventData as any).duration || null,
+        location: eventData.location,
+        description: eventData.description,
+        event_type: (eventData as any).event_type || null,
+      })
     }
 
     // Get current user's roster member info
@@ -145,21 +218,21 @@ export default function EventDetailPage() {
         available: [] as AttendeeInfo[],
         unavailable: [] as AttendeeInfo[],
         maybe: [] as AttendeeInfo[],
-        late: [] as AttendeeInfo[]
+        unknown: [] as AttendeeInfo[]
       }
 
       rosterMembers.forEach(member => {
         const avail = availMap.get(member.id) || null
         const info = { rosterMember: member, availability: avail }
         
-        if (!avail || avail.status === 'unavailable') {
+        if (!avail) {
+          grouped.unknown.push(info)
+        } else if (avail.status === 'unavailable') {
           grouped.unavailable.push(info)
         } else if (avail.status === 'available') {
           grouped.available.push(info)
         } else if (avail.status === 'maybe') {
           grouped.maybe.push(info)
-        } else if (avail.status === 'late') {
-          grouped.late.push(info)
         }
       })
 
@@ -169,11 +242,7 @@ export default function EventDetailPage() {
     setLoading(false)
   }
 
-  async function handleDelete() {
-    if (!confirm('Are you sure you want to delete this event? This action cannot be undone.')) {
-      return
-    }
-
+  async function handleDeleteConfirm() {
     const supabase = createClient()
 
     const { error } = await supabase
@@ -187,12 +256,15 @@ export default function EventDetailPage() {
         description: error.message,
         variant: 'destructive',
       })
+      setShowDeleteAlert(false)
     } else {
       toast({
         title: 'Event deleted',
         description: 'The event has been deleted successfully',
       })
-      router.push(`/teams/${teamId}`)
+      setShowDeleteAlert(false)
+      // Navigate back to previous page (calendar, teams page, etc.)
+      router.back()
     }
   }
 
@@ -251,6 +323,76 @@ export default function EventDetailPage() {
     loadEventData()
   }
 
+  async function updatePlayerAvailability(rosterMemberId: string, newStatus: string) {
+    // Don't allow setting to "unknown" - it's just a display state
+    if (newStatus === 'unknown') return
+    if (!isCaptain && !isSystemAdmin) {
+      toast({
+        title: 'Permission Denied',
+        description: 'Only captains and system admins can manage availability',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const supabase = createClient()
+
+    // Find existing availability for this player and event
+    const { data: existing } = await supabase
+      .from('availability')
+      .select('id')
+      .eq('roster_member_id', rosterMemberId)
+      .eq('event_id', eventId)
+      .maybeSingle()
+
+    if (existing) {
+      // Update existing
+      const { error } = await supabase
+        .from('availability')
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    } else {
+      // Create new
+      const { error } = await supabase
+        .from('availability')
+        .insert({
+          roster_member_id: rosterMemberId,
+          event_id: eventId,
+          status: newStatus,
+          responded_at: new Date().toISOString(),
+        })
+
+      if (error) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    toast({
+      title: 'Updated',
+      description: 'Availability updated successfully',
+    })
+
+    // Reload data
+    loadEventData()
+  }
+
   function getStatusLabel(status: string | undefined) {
     switch (status) {
       case 'available':
@@ -259,8 +401,6 @@ export default function EventDetailPage() {
         return 'Unavailable'
       case 'maybe':
         return 'Maybe'
-      case 'late':
-        return 'Running Late'
       default:
         return 'Set RSVP'
     }
@@ -274,10 +414,79 @@ export default function EventDetailPage() {
         return <X className="h-4 w-4 text-red-500" />
       case 'maybe':
         return <HelpCircle className="h-4 w-4 text-yellow-500" />
-      case 'late':
-        return <LateClock className="h-4 w-4 text-orange-500" />
       default:
         return <ChevronDown className="h-4 w-4" />
+    }
+  }
+
+  function handleStartEdit() {
+    if (event) {
+      setEditedEvent({
+        event_name: event.event_name,
+        date: event.date,
+        time: event.time,
+        duration: (event as any).duration || null,
+        location: event.location,
+        description: event.description,
+        event_type: (event as any).event_type || null,
+      })
+      setIsEditing(true)
+    }
+  }
+
+  function handleCancelEdit() {
+    // Reset form to original values
+    if (event) {
+      setEditedEvent({
+        event_name: event.event_name,
+        date: event.date,
+        time: event.time,
+        duration: (event as any).duration || null,
+        location: event.location,
+        description: event.description,
+        event_type: (event as any).event_type || null,
+      })
+    }
+    setIsEditing(false)
+    // Navigate back to previous page (calendar, teams page, etc.)
+    router.back()
+  }
+
+  async function handleSaveChanges() {
+    if (!event) return
+
+    setSaving(true)
+    const supabase = createClient()
+
+    const { error } = await supabase
+      .from('events')
+      .update({
+        event_name: editedEvent.event_name,
+        date: editedEvent.date,
+        time: editedEvent.time,
+        duration: editedEvent.duration ? parseInt(editedEvent.duration.toString()) : null,
+        location: editedEvent.location || null,
+        description: editedEvent.description || null,
+        event_type: editedEvent.event_type || null,
+      })
+      .eq('id', event.id)
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      })
+      setSaving(false)
+    } else {
+      toast({
+        title: 'Event updated',
+        description: 'The event has been updated successfully',
+      })
+      setIsEditing(false)
+      setSaving(false)
+      // Navigate back to previous page (calendar, teams page, etc.)
+      router.back()
     }
   }
 
@@ -289,62 +498,219 @@ export default function EventDetailPage() {
     )
   }
 
-  const totalResponses = attendees.available.length + attendees.maybe.length + attendees.late.length + attendees.unavailable.length
-  const goingCount = attendees.available.length + attendees.late.length
+  const totalResponses = attendees.available.length + attendees.maybe.length + attendees.unavailable.length
+  const goingCount = attendees.available.length
 
   return (
     <div className="flex flex-col min-h-screen">
       <Header title="Event Details" />
 
       <main className="flex-1 p-4 space-y-4">
+        {/* Back Button */}
+        <div className="flex items-center justify-between mb-2">
+          <Button variant="ghost" onClick={() => router.back()} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+          {isEditing && (
+            <Button
+              onClick={handleSaveChanges}
+              disabled={saving || !editedEvent.event_name || !editedEvent.date || !editedEvent.time}
+              size="sm"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+          )}
+        </div>
         {/* Event Info */}
         <Card>
           <CardContent className="p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">{event.event_name}</h2>
-              <Badge 
-                variant="secondary" 
-                className={(event as any).event_type ? getEventTypeBadgeClass((event as any).event_type) : ''}
-              >
-                {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
-              </Badge>
-            </div>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                {formatDate(event.date, 'EEEE, MMMM d, yyyy')}
-              </div>
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                {formatTime(event.time)}
-                {(event as any).duration && (
-                  <span className="text-muted-foreground">
-                    {(() => {
-                      const hours = Math.floor((event as any).duration / 60)
-                      const minutes = (event as any).duration % 60
-                      if (hours > 0 && minutes > 0) {
-                        return `(${hours}h ${minutes}m)`
-                      } else if (hours > 0) {
-                        return `(${hours}h)`
-                      } else {
-                        return `(${minutes}m)`
-                      }
-                    })()}
-                  </span>
+              <div className="flex-1">
+                {isEditing ? (
+                  <Input
+                    value={editedEvent.event_name || ''}
+                    onChange={(e) => setEditedEvent({ ...editedEvent, event_name: e.target.value })}
+                    className="text-lg font-semibold"
+                    placeholder="Event name"
+                  />
+                ) : (
+                  <>
+                    <h2 className="text-lg font-semibold">{event.event_name}</h2>
+                    {teamName && (
+                      <p className="text-sm text-muted-foreground mt-1">Team: {teamName}</p>
+                    )}
+                  </>
                 )}
               </div>
-              {event.location && (
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-muted-foreground" />
-                  {event.location}
-                </div>
+              {!isEditing && (
+                <EventTypeBadge eventType={(event as any).event_type} />
+              )}
+              {isEditing && (
+                <Select
+                  value={editedEvent.event_type || 'none'}
+                  onValueChange={(value) => setEditedEvent({ ...editedEvent, event_type: value === 'none' ? null : value })}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="practice">Practice</SelectItem>
+                    <SelectItem value="warmup">Warmup</SelectItem>
+                    <SelectItem value="fun">Fun</SelectItem>
+                    <SelectItem value="social">Social</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
               )}
             </div>
-            {event.description && (
-              <div className="pt-2 border-t">
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                  {event.description}
-                </p>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground font-medium">Date:</span>
+                  {isEditing ? (
+                    <Input
+                      type="date"
+                      value={editedEvent.date || ''}
+                      onChange={(e) => setEditedEvent({ ...editedEvent, date: e.target.value })}
+                      className="flex-1"
+                    />
+                  ) : (
+                    <span>{formatDate(event.date, 'EEEE, MMMM d, yyyy')}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground font-medium">Time:</span>
+                  {isEditing ? (
+                    <Input
+                      type="time"
+                      value={editedEvent.time || ''}
+                      onChange={(e) => setEditedEvent({ ...editedEvent, time: e.target.value })}
+                      className="flex-1"
+                    />
+                  ) : (
+                    <span>{formatTime(event.time)}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Timer className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground font-medium">Duration:</span>
+                  {isEditing ? (
+                    <Input
+                      type="number"
+                      placeholder="Duration (minutes)"
+                      value={editedEvent.duration?.toString() || ''}
+                      onChange={(e) => setEditedEvent({ ...editedEvent, duration: e.target.value ? parseInt(e.target.value) : null })}
+                      className="flex-1"
+                      min="0"
+                    />
+                  ) : (
+                    (event as any).duration ? (
+                      <span>
+                        {(() => {
+                          const hours = Math.floor((event as any).duration / 60)
+                          const minutes = (event as any).duration % 60
+                          if (hours > 0 && minutes > 0) {
+                            return `${hours}h ${minutes}m`
+                          } else if (hours > 0) {
+                            return `${hours}h`
+                          } else {
+                            return `${minutes}m`
+                          }
+                        })()}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">No duration set</span>
+                    )
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground font-medium">Location:</span>
+                {isEditing ? (
+                  <Input
+                    value={editedEvent.location || ''}
+                    onChange={(e) => setEditedEvent({ ...editedEvent, location: e.target.value })}
+                    className="flex-1"
+                    placeholder="Location"
+                  />
+                ) : (
+                  <span>{event.location || <span className="text-muted-foreground">No location</span>}</span>
+                )}
+              </div>
+            </div>
+            <div className="pt-2 border-t">
+              <div className="text-muted-foreground font-medium text-sm mb-2">Description:</div>
+              {isEditing ? (
+                <Textarea
+                  value={editedEvent.description || ''}
+                  onChange={(e) => setEditedEvent({ ...editedEvent, description: e.target.value })}
+                  placeholder="Event description"
+                  rows={4}
+                />
+              ) : (
+                event.description ? (
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                    {event.description}
+                  </p>
+                ) : (
+                  <span className="text-sm text-muted-foreground">No description</span>
+                )
+              )}
+            </div>
+            {isEditing && (
+              <div className="flex gap-2 pt-2 border-t">
+                <Button
+                  onClick={handleSaveChanges}
+                  disabled={saving || !editedEvent.event_name || !editedEvent.date || !editedEvent.time}
+                  className="flex-1"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleCancelEdit}
+                  variant="outline"
+                  disabled={saving}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-300"
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+                {isCaptain && (
+                  <Button
+                    onClick={() => setShowDeleteAlert(true)}
+                    variant="destructive"
+                    disabled={saving}
+                    className="flex-1"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>
@@ -376,12 +742,6 @@ export default function EventDetailPage() {
                   <span>Available</span>
                 </div>
               </SelectItem>
-              <SelectItem value="late">
-                <div className="flex items-center gap-2">
-                  <LateClock className="h-4 w-4 text-orange-500" />
-                  <span>Running Late</span>
-                </div>
-              </SelectItem>
               <SelectItem value="maybe">
                 <div className="flex items-center gap-2">
                   <HelpCircle className="h-4 w-4 text-yellow-500" />
@@ -399,20 +759,88 @@ export default function EventDetailPage() {
         </div>
 
         {/* Captain Actions */}
-        {isCaptain && (
-          <div className="flex gap-3">
+        {(isCaptain || isSystemAdmin) && !isEditing && (
+          <div className="flex gap-3 flex-wrap">
             <Button
               variant="outline"
               className="flex-1"
-              onClick={() => setShowEditDialog(true)}
+              onClick={() => setShowAvailabilityManager(true)}
             >
-              <Edit className="h-4 w-4 mr-2" />
-              Edit Event
+              <Users className="h-4 w-4 mr-2" />
+              Manage Availability
             </Button>
+            {isCaptain && !isEditing && (
+              <>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={handleStartEdit}
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Event
+                </Button>
+              </>
+            )}
+            {isEditing && (
+              <div className="flex gap-2 w-full">
+                <Button
+                  onClick={handleSaveChanges}
+                  disabled={saving || !editedEvent.event_name || !editedEvent.date || !editedEvent.time}
+                  className="flex-1"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleCancelEdit}
+                  variant="outline"
+                  disabled={saving}
+                  className="flex-1"
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+              </div>
+            )}
+            {(event as any).recurrence_series_id && (
+              <>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setInitialEditScope('series')
+                    setShowEditDialog(true)
+                  }}
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Series
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setInitialEditScope('single')
+                    setShowEditDialog(true)
+                  }}
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit This Occurrence
+                </Button>
+              </>
+            )}
             <Button
               variant="destructive"
               className="flex-1"
-              onClick={handleDelete}
+              onClick={() => setShowDeleteAlert(true)}
             >
               <Trash2 className="h-4 w-4 mr-2" />
               Delete Event
@@ -426,7 +854,7 @@ export default function EventDetailPage() {
             <CardTitle className="text-sm">Attendance Summary</CardTitle>
           </CardHeader>
           <CardContent className="p-4 pt-2">
-            <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="grid grid-cols-3 gap-2 text-center">
               <div>
                 <div className="text-2xl font-bold text-green-600">{attendees.available.length}</div>
                 <div className="text-xs text-muted-foreground">Available</div>
@@ -434,10 +862,6 @@ export default function EventDetailPage() {
               <div>
                 <div className="text-2xl font-bold text-yellow-600">{attendees.maybe.length}</div>
                 <div className="text-xs text-muted-foreground">Maybe</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-orange-600">{attendees.late.length}</div>
-                <div className="text-xs text-muted-foreground">Late</div>
               </div>
               <div>
                 <div className="text-2xl font-bold text-red-600">{attendees.unavailable.length}</div>
@@ -466,11 +890,6 @@ export default function EventDetailPage() {
                 {attendees.available.map(({ rosterMember }) => (
                   <div key={rosterMember.id} className="flex items-center justify-between text-sm">
                     <span>{rosterMember.full_name}</span>
-                    {rosterMember.ntrp_rating && (
-                      <Badge variant="outline" className="text-xs">
-                        {rosterMember.ntrp_rating}
-                      </Badge>
-                    )}
                   </div>
                 ))}
               </div>
@@ -491,36 +910,6 @@ export default function EventDetailPage() {
                 {attendees.maybe.map(({ rosterMember }) => (
                   <div key={rosterMember.id} className="flex items-center justify-between text-sm">
                     <span>{rosterMember.full_name}</span>
-                    {rosterMember.ntrp_rating && (
-                      <Badge variant="outline" className="text-xs">
-                        {rosterMember.ntrp_rating}
-                      </Badge>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {attendees.late.length > 0 && (
-          <Card>
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <LateClock className="h-4 w-4 text-orange-500" />
-                Running Late ({attendees.late.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-2">
-              <div className="space-y-2">
-                {attendees.late.map(({ rosterMember }) => (
-                  <div key={rosterMember.id} className="flex items-center justify-between text-sm">
-                    <span>{rosterMember.full_name}</span>
-                    {rosterMember.ntrp_rating && (
-                      <Badge variant="outline" className="text-xs">
-                        {rosterMember.ntrp_rating}
-                      </Badge>
-                    )}
                   </div>
                 ))}
               </div>
@@ -541,14 +930,25 @@ export default function EventDetailPage() {
                 {attendees.unavailable.map(({ rosterMember }) => (
                   <div key={rosterMember.id} className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{rosterMember.full_name}</span>
-                    {rosterMember.ntrp_rating && (
-                      <Badge variant="outline" className="text-xs">
-                        {rosterMember.ntrp_rating}
-                      </Badge>
-                    )}
                   </div>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Make Recurring Button - only for non-recurring events */}
+        {isCaptain && !isEditing && !(event as any).recurrence_series_id && (
+          <Card>
+            <CardContent className="p-4">
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowEditDialog(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Make Recurring
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -558,15 +958,262 @@ export default function EventDetailPage() {
       {event && (
         <EditEventDialog
           open={showEditDialog}
-          onOpenChange={setShowEditDialog}
+          onOpenChange={(open) => {
+            setShowEditDialog(open)
+            if (!open) {
+              setInitialEditScope(undefined) // Reset when dialog closes
+            }
+          }}
           event={event}
           teamId={teamId}
           onUpdated={() => {
             loadEventData()
             setShowEditDialog(false)
+            setInitialEditScope(undefined)
+            // Navigate back to the previous page (calendar, teams page, etc.)
+            router.back()
           }}
+          initialEditScope={initialEditScope}
         />
       )}
+
+      {/* Availability Management Dialog */}
+      <AlertDialog open={showAvailabilityManager} onOpenChange={setShowAvailabilityManager}>
+        <AlertDialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <AlertDialogTitle>Manage Availability</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Change availability status for team members. Drag players between sections or use the dropdowns.
+                </AlertDialogDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowAvailabilityManager(false)}
+                className="h-6 w-6 -mt-1 -mr-1"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Available Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Check className="h-4 w-4 text-green-500" />
+                Available ({attendees.available.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-green-200 rounded-lg p-3 bg-green-50/50">
+                {attendees.available.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm">{rosterMember.full_name}</span>
+                    <Select
+                      value="available"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.available.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No one available</p>
+                )}
+              </div>
+            </div>
+
+            {/* Maybe Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <HelpCircle className="h-4 w-4 text-yellow-500" />
+                Maybe ({attendees.maybe.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-yellow-200 rounded-lg p-3 bg-yellow-50/50">
+                {attendees.maybe.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm">{rosterMember.full_name}</span>
+                    <Select
+                      value="maybe"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.maybe.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No maybes</p>
+                )}
+              </div>
+            </div>
+
+            {/* Unavailable Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <X className="h-4 w-4 text-red-500" />
+                Unavailable ({attendees.unavailable.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-red-200 rounded-lg p-3 bg-red-50/50">
+                {attendees.unavailable.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm text-muted-foreground">{rosterMember.full_name}</span>
+                    <Select
+                      value="unavailable"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.unavailable.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">Everyone is available!</p>
+                )}
+              </div>
+            </div>
+
+            {/* Unknown Section */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <HelpCircle className="h-4 w-4 text-gray-500" />
+                Unknown ({attendees.unknown.length})
+              </h3>
+              <div className="space-y-2 min-h-[100px] border-2 border-dashed border-gray-200 rounded-lg p-3 bg-gray-50/50">
+                {attendees.unknown.map(({ rosterMember }) => (
+                  <div key={rosterMember.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-sm text-muted-foreground">{rosterMember.full_name}</span>
+                    <Select
+                      value="unknown"
+                      onValueChange={(value) => updatePlayerAvailability(rosterMember.id, value)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue>
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-gray-500" />
+                            <span>Unknown</span>
+                          </div>
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="available">
+                          <div className="flex items-center gap-2">
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span>Available</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="maybe">
+                          <div className="flex items-center gap-2">
+                            <HelpCircle className="h-4 w-4 text-yellow-500" />
+                            <span>Maybe</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="unavailable">
+                          <div className="flex items-center gap-2">
+                            <X className="h-4 w-4 text-red-500" />
+                            <span>Unavailable</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {attendees.unknown.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">All players have responded</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowAvailabilityManager(false)}>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteAlert} onOpenChange={setShowDeleteAlert}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Event?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{event?.event_name}</strong>? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              Delete Event
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

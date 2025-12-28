@@ -29,6 +29,38 @@ interface LineupBenchEmailData {
   captainNames: string
 }
 
+interface EventInvitationEmailData {
+  eventName: string
+  eventDate: string
+  eventTime: string
+  eventLocation?: string | null
+  eventDescription?: string | null
+  inviterName: string
+  inviteeName?: string
+  invitationMessage?: string | null
+  isPersonalEvent?: boolean
+  appUrl?: string
+}
+
+interface EventCanceledEmailData {
+  eventName: string
+  eventDate: string
+  eventTime: string
+  eventLocation?: string | null
+  inviterName: string
+  inviteeName?: string
+  isPersonalEvent?: boolean
+  appUrl?: string
+}
+
+interface TeamInvitationEmailData {
+  teamName: string
+  inviterName: string
+  inviteeName?: string
+  invitationMessage?: string | null
+  appUrl?: string
+}
+
 export class EmailService {
   /**
    * Template A: Auto-Welcome Email
@@ -105,6 +137,159 @@ ${team.name}`
 
     return {
       to: player.email || '',
+      subject,
+      body,
+    }
+  }
+
+  /**
+   * Template D: Event Invitation Email
+   * Sent when inviting someone to a team event or personal activity
+   */
+  static compileEventInvitationEmail(data: EventInvitationEmailData): EmailData {
+    const { 
+      eventName, 
+      eventDate, 
+      eventTime, 
+      eventLocation, 
+      eventDescription,
+      inviterName,
+      inviteeName,
+      invitationMessage,
+      isPersonalEvent = false,
+      appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tennislife.app'
+    } = data
+
+    const inviteeGreeting = inviteeName ? inviteeName.split(' ')[0] : 'there'
+    const eventType = isPersonalEvent ? 'Activity' : 'Event'
+
+    const subject = `You're invited to ${eventName} on ${formatDate(eventDate)}`
+
+    let body = `Hi ${inviteeGreeting},
+
+${inviterName} has invited you to ${isPersonalEvent ? 'an activity' : 'a team event'}!
+
+${eventType}: ${eventName}
+Date: ${formatDate(eventDate)}
+Time: ${formatTime(eventTime)}`
+
+    if (eventLocation) {
+      body += `\nLocation: ${eventLocation}`
+    }
+
+    if (eventDescription) {
+      body += `\n\n${eventDescription}`
+    }
+
+    if (invitationMessage) {
+      body += `\n\nMessage from ${inviterName}:\n"${invitationMessage}"`
+    }
+
+    body += `\n\n${isPersonalEvent ? 'View and respond to this invitation' : 'View this event'} in the TennisLife app: ${appUrl}`
+
+    if (!isPersonalEvent) {
+      body += `\n\nIf you haven't joined the app yet, you can sign up with this email address to see the invitation and respond.`
+    }
+
+    body += `\n\nSee you there!
+TennisLife`
+
+    return {
+      to: '', // Will be set by caller
+      subject,
+      body,
+    }
+  }
+
+  /**
+   * Template F: Team Invitation Email
+   * Sent when inviting someone to join a team (for non-app users)
+   */
+  static compileTeamInvitationEmail(data: TeamInvitationEmailData): EmailData {
+    const {
+      teamName,
+      inviterName,
+      inviteeName,
+      invitationMessage,
+      appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tennislife.app'
+    } = data
+
+    const inviteeGreeting = inviteeName ? inviteeName.split(' ')[0] : 'there'
+
+    const subject = `You're invited to join ${teamName} on TennisLife`
+
+    let body = `Hi ${inviteeGreeting},
+
+${inviterName} has invited you to join ${teamName} on TennisLife!
+
+TennisLife is a mobile app that helps tennis teams manage matches, practices, availability, and more.`
+
+    if (invitationMessage) {
+      body += `\n\nMessage from ${inviterName}:\n"${invitationMessage}"`
+    }
+
+    body += `\n\nTo accept this invitation and join ${teamName}:
+1. Sign up for TennisLife at: ${appUrl}/auth/signup
+2. Use this email address when creating your account
+3. Once you sign up, you'll automatically be added to ${teamName} and can start using the app!
+
+If you already have a TennisLife account with this email, you'll see the invitation in your Messages tab after logging in.
+
+We look forward to having you on the team!
+
+Best,
+${inviterName}
+TennisLife`
+
+    return {
+      to: '', // Will be set by caller
+      subject,
+      body,
+    }
+  }
+
+  /**
+   * Template E: Event Canceled Email
+   * Sent when a user is removed from an event
+   */
+  static compileEventCanceledEmail(data: EventCanceledEmailData): EmailData {
+    const { 
+      eventName, 
+      eventDate, 
+      eventTime, 
+      eventLocation,
+      inviterName,
+      inviteeName,
+      isPersonalEvent = false,
+      appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://tennislife.app'
+    } = data
+
+    const inviteeGreeting = inviteeName ? inviteeName.split(' ')[0] : 'there'
+    const eventType = isPersonalEvent ? 'Activity' : 'Event'
+
+    const subject = `Event Canceled: ${eventName} on ${formatDate(eventDate)}`
+
+    let body = `Hi ${inviteeGreeting},
+
+We're sorry to inform you that ${isPersonalEvent ? 'the activity' : 'the event'} you were invited to has been canceled.
+
+${eventType}: ${eventName}
+Date: ${formatDate(eventDate)}
+Time: ${formatTime(eventTime)}`
+
+    if (eventLocation) {
+      body += `\nLocation: ${eventLocation}`
+    }
+
+    body += `\n\nThis ${isPersonalEvent ? 'activity' : 'event'} has been canceled by ${inviterName}.`
+
+    body += `\n\nIf you have any questions, please contact ${inviterName} or visit the TennisLife app: ${appUrl}`
+
+    body += `\n\nThank you for your understanding.
+TennisLife`
+
+    return {
+      to: '', // Will be set by caller
       subject,
       body,
     }

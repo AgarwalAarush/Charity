@@ -8,20 +8,59 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { Team, Match, Event } from '@/types/database.types'
-import { formatDate, formatTime, cn } from '@/lib/utils'
+import { Team } from '@/types/database.types'
+
+// Define types inline since they're not exported from database.types
+type Match = {
+  id: string
+  team_id: string
+  date: string
+  time: string
+  opponent_name: string
+  venue?: string | null
+  is_home: boolean
+  duration?: number | null
+  [key: string]: any
+}
+
+type Event = {
+  id: string
+  team_id: string
+  event_name: string
+  date: string
+  time: string
+  location?: string | null
+  event_type?: string | null
+  duration?: number | null
+  [key: string]: any
+}
+import { formatDate, formatTime, calculateEndTime, cn } from '@/lib/utils'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
+import { EventTypeBadge } from '@/components/events/event-type-badge'
 import {
   Users,
   Calendar,
   ClipboardList,
   Plus,
   ChevronRight,
+  ChevronDown,
   Settings,
   ListChecks,
   MessageCircle,
-  CalendarPlus
+  CalendarPlus,
+  Check,
+  X,
+  HelpCircle,
+  Clock,
+  ArrowRightLeft
 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { AddMatchDialog } from '@/components/teams/add-match-dialog'
 import { AddEventDialog } from '@/components/teams/add-event-dialog'
 
@@ -32,6 +71,7 @@ export default function TeamDetailPage() {
   const [team, setTeam] = useState<Team | null>(null)
   const [matches, setMatches] = useState<Match[]>([])
   const [events, setEvents] = useState<Event[]>([])
+  const [eventAvailability, setEventAvailability] = useState<Record<string, string>>({})
   const [rosterCount, setRosterCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showAddMatchDialog, setShowAddMatchDialog] = useState(false)
@@ -46,6 +86,9 @@ export default function TeamDetailPage() {
     ties: number
     winPercentage: number
   } | null>(null)
+  const [expandedLineups, setExpandedLineups] = useState<Record<string, boolean>>({})
+  const [matchLineups, setMatchLineups] = useState<Record<string, any[]>>({})
+  const [userTeams, setUserTeams] = useState<Array<{ id: string; name: string }>>([])
 
   useEffect(() => {
     loadTeamData()
@@ -54,6 +97,26 @@ export default function TeamDetailPage() {
   async function loadTeamData() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
+
+    // Load all teams the user is on
+    if (user) {
+      const { data: rosterMemberships } = await supabase
+        .from('roster_members')
+        .select('team_id, teams(id, name)')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+
+      if (rosterMemberships) {
+        const teams = rosterMemberships
+          .map((rm: any) => {
+            const team = Array.isArray(rm.teams) ? rm.teams[0] : rm.teams
+            return team ? { id: team.id, name: team.name } : null
+          })
+          .filter((t): t is { id: string; name: string } => t !== null)
+        
+        setUserTeams(teams)
+      }
+    }
 
     const { data: teamData } = await supabase
       .from('teams')
@@ -109,6 +172,33 @@ export default function TeamDetailPage() {
 
     if (matchData) {
       setMatches(matchData)
+      // Load lineups for all matches
+      const matchIds = matchData.map(m => m.id)
+      if (matchIds.length > 0) {
+        const { data: lineupsData } = await supabase
+          .from('lineups')
+          .select(`
+            id,
+            match_id,
+            court_slot,
+            player1:roster_members!lineups_player1_id_fkey(full_name),
+            player2:roster_members!lineups_player2_id_fkey(full_name)
+          `)
+          .in('match_id', matchIds)
+          .order('match_id')
+          .order('court_slot', { ascending: true })
+
+        if (lineupsData) {
+          const lineupsByMatch: Record<string, any[]> = {}
+          lineupsData.forEach(lineup => {
+            if (!lineupsByMatch[lineup.match_id]) {
+              lineupsByMatch[lineup.match_id] = []
+            }
+            lineupsByMatch[lineup.match_id].push(lineup)
+          })
+          setMatchLineups(lineupsByMatch)
+        }
+      }
     }
 
     // Load upcoming events (gracefully handle if table doesn't exist yet)
@@ -130,8 +220,39 @@ export default function TeamDetailPage() {
     // Set events data if available, otherwise default to empty array
     if (eventData) {
       setEvents(eventData)
+      
+      // Load availability for events if user is logged in
+      if (user && eventData.length > 0) {
+        // Get user's roster member ID for this team
+        const { data: rosterMember } = await supabase
+          .from('roster_members')
+          .select('id')
+          .eq('team_id', teamId)
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .maybeSingle()
+        
+        if (rosterMember) {
+          const eventIds = eventData.map(e => e.id)
+          const { data: availabilityData } = await supabase
+            .from('availability')
+            .select('event_id, status')
+            .eq('roster_member_id', rosterMember.id)
+            .in('event_id', eventIds)
+          
+          // Build availability map
+          const availMap: Record<string, string> = {}
+          availabilityData?.forEach(avail => {
+            if (avail.event_id) {
+              availMap[avail.event_id] = avail.status || 'unavailable'
+            }
+          })
+          setEventAvailability(availMap)
+        }
+      }
     } else {
       setEvents([])
+      setEventAvailability({})
     }
 
     const { count } = await supabase
@@ -199,6 +320,37 @@ export default function TeamDetailPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header title={team.name} />
+      
+      {/* Team Switcher - Only show if user is on multiple teams */}
+      {userTeams.length > 1 && (
+        <div className="px-4 pb-2">
+          <Card>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-muted-foreground">Switch Team:</span>
+                <Select
+                  value={teamId}
+                  onValueChange={(newTeamId) => {
+                    router.push(`/teams/${newTeamId}`)
+                  }}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userTeams.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <main className="flex-1 p-4 space-y-4">
         {/* Team Info */}
@@ -339,45 +491,105 @@ export default function TeamDetailPage() {
             </Card>
           ) : (
             <div className="space-y-2">
-              {matches.map((match) => (
-                <Card 
-                  key={match.id} 
-                  className="hover:bg-accent/50 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/teams/${teamId}/matches/${match.id}`)}
-                >
-                  <CardContent className="p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
+              {matches.map((match) => {
+                const lineups = matchLineups[match.id] || []
+                const isExpanded = expandedLineups[match.id] || false
+                return (
+                  <Card 
+                    key={match.id} 
+                    className="hover:bg-accent/50 transition-colors"
+                  >
+                    <CardContent className="p-3">
+                      <div 
+                        className="flex items-center justify-between cursor-pointer"
+                        onClick={() => router.push(`/teams/${teamId}/matches/${match.id}`)}
+                      >
+                        <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="default" className="text-xs bg-green-500 text-white">
+                            Match
+                          </Badge>
                           <span className="font-medium text-sm">
                             vs {match.opponent_name}
                           </span>
-                          <Badge variant={match.is_home ? 'default' : 'outline'} className="text-xs">
-                            {match.is_home ? 'Home' : 'Away'}
-                          </Badge>
+                          {match.is_home ? (
+                            <Badge variant="default" className="text-xs bg-teal-500 text-white">
+                              Home
+                            </Badge>
+                          ) : (
+                            <Badge variant="default" className="text-xs bg-orange-500 text-white">
+                              Away
+                            </Badge>
+                          )}
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDate(match.date, 'EEE, MMM d')} {formatTime(match.time).toLowerCase()}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Link href={`/teams/${teamId}/matches/${match.id}/lineup`}>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(match.date, 'EEE, MMM d')} {formatTime(match.time).toLowerCase()}
+                            {match.duration && (
+                              <span className="ml-1">
+                                - {formatTime(calculateEndTime(match.time, match.duration)).toLowerCase()}
+                              </span>
+                            )}
+                          </p>
+                          {match.venue && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              📍 {match.venue}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             className="text-xs"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setExpandedLineups(prev => ({
+                                ...prev,
+                                [match.id]: !prev[match.id]
+                              }))
+                            }}
+                            title={lineups.length > 0 ? "Show/hide lineup" : "No lineup posted yet"}
                           >
-                            <ClipboardList className="h-4 w-4 mr-1" />
-                            Lineup
+                            <ChevronDown className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-180")} />
                           </Button>
-                        </Link>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          <Link href={`/teams/${teamId}/matches/${match.id}/lineup`}>
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              className="text-xs"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ClipboardList className="h-4 w-4 mr-1" />
+                              {lineups.length > 0 ? 'Edit' : 'Lineup'}
+                            </Button>
+                          </Link>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t space-y-2">
+                          {lineups.length > 0 ? (
+                            lineups.map((lineup) => (
+                              <div key={lineup.id} className="text-xs">
+                                <span className="font-medium">Court {lineup.court_slot}:</span>
+                                <span className="text-muted-foreground ml-1">
+                                  {lineup.player1?.full_name || 'TBD'}
+                                  {lineup.player2 && ` & ${lineup.player2.full_name}`}
+                                  {!lineup.player1 && !lineup.player2 && ' No players assigned'}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              No lineup posted yet. Click "Lineup" to create one.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
             </div>
           )}
         </div>
@@ -417,31 +629,16 @@ export default function TeamDetailPage() {
                           <span className="font-medium text-sm">
                             {event.event_name}
                           </span>
-                          <Badge 
-                            variant="secondary" 
-                            className={cn(
-                              "text-xs",
-                              (event as any).event_type && getEventTypeBadgeClass((event as any).event_type)
-                            )}
-                          >
-                            {(event as any).event_type ? getEventTypeLabel((event as any).event_type) : 'Event'}
-                          </Badge>
+                          <EventTypeBadge 
+                            eventType={(event as any).event_type} 
+                            className="text-xs"
+                          />
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {formatDate(event.date, 'EEE, MMM d')} {formatTime(event.time).toLowerCase()}
                           {(event as any).duration && (
                             <span className="ml-1">
-                              {(() => {
-                                const hours = Math.floor((event as any).duration / 60)
-                                const minutes = (event as any).duration % 60
-                                if (hours > 0 && minutes > 0) {
-                                  return `(${hours}h ${minutes}m)`
-                                } else if (hours > 0) {
-                                  return `(${hours}h)`
-                                } else {
-                                  return `(${minutes}m)`
-                                }
-                              })()}
+                              - {formatTime(calculateEndTime(event.time, (event as any).duration)).toLowerCase()}
                             </span>
                           )}
                         </p>
@@ -451,7 +648,31 @@ export default function TeamDetailPage() {
                           </p>
                         )}
                       </div>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          const status = eventAvailability[event.id]
+                          if (!status) {
+                            return (
+                              <span className="text-xs text-muted-foreground">Not set</span>
+                            )
+                          }
+                          const statusConfig = {
+                            available: { icon: Check, label: 'Available', color: 'text-green-500' },
+                            unavailable: { icon: X, label: 'Unavailable', color: 'text-red-500' },
+                            maybe: { icon: HelpCircle, label: 'Maybe', color: 'text-yellow-500' },
+                            last_resort: { icon: HelpCircle, label: 'Last Resort', color: 'text-purple-500' },
+                          }
+                          const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.unavailable
+                          const Icon = config.icon
+                          return (
+                            <div className="flex items-center gap-1">
+                              <Icon className={cn('h-3 w-3', config.color)} />
+                              <span className={cn('text-xs', config.color)}>{config.label}</span>
+                            </div>
+                          )
+                        })()}
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

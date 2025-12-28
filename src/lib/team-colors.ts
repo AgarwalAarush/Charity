@@ -5,22 +5,26 @@
 
 // Predefined color palette using Tailwind's 500 shades
 const TEAM_COLORS = [
-  { name: 'blue', hex: '#3b82f6', bgClass: 'bg-blue-500', borderClass: 'border-l-blue-500', textClass: 'text-blue-500' },
-  { name: 'green', hex: '#22c55e', bgClass: 'bg-green-500', borderClass: 'border-l-green-500', textClass: 'text-green-500' },
-  { name: 'purple', hex: '#a855f7', bgClass: 'bg-purple-500', borderClass: 'border-l-purple-500', textClass: 'text-purple-500' },
-  { name: 'orange', hex: '#f97316', bgClass: 'bg-orange-500', borderClass: 'border-l-orange-500', textClass: 'text-orange-500' },
-  { name: 'pink', hex: '#ec4899', bgClass: 'bg-pink-500', borderClass: 'border-l-pink-500', textClass: 'text-pink-500' },
-  { name: 'teal', hex: '#14b8a6', bgClass: 'bg-teal-500', borderClass: 'border-l-teal-500', textClass: 'text-teal-500' },
-  { name: 'red', hex: '#ef4444', bgClass: 'bg-red-500', borderClass: 'border-l-red-500', textClass: 'text-red-500' },
-  { name: 'yellow', hex: '#eab308', bgClass: 'bg-yellow-500', borderClass: 'border-l-yellow-500', textClass: 'text-yellow-500' },
-  { name: 'indigo', hex: '#6366f1', bgClass: 'bg-indigo-500', borderClass: 'border-l-indigo-500', textClass: 'text-indigo-500' },
-  { name: 'cyan', hex: '#06b6d4', bgClass: 'bg-cyan-500', borderClass: 'border-l-cyan-500', textClass: 'text-cyan-500' },
+  { name: 'blue', hex: '#3b82f6', bgClass: 'bg-blue-500', bgLightClass: 'bg-blue-50', borderClass: 'border-l-blue-500', textClass: 'text-blue-500' },
+  { name: 'green', hex: '#22c55e', bgClass: 'bg-green-500', bgLightClass: 'bg-green-50', borderClass: 'border-l-green-500', textClass: 'text-green-500' },
+  { name: 'purple', hex: '#a855f7', bgClass: 'bg-purple-500', bgLightClass: 'bg-purple-50', borderClass: 'border-l-purple-500', textClass: 'text-purple-500' },
+  { name: 'orange', hex: '#f97316', bgClass: 'bg-orange-500', bgLightClass: 'bg-orange-50', borderClass: 'border-l-orange-500', textClass: 'text-orange-500' },
+  { name: 'pink', hex: '#ec4899', bgClass: 'bg-pink-500', bgLightClass: 'bg-pink-50', borderClass: 'border-l-pink-500', textClass: 'text-pink-500' },
+  { name: 'teal', hex: '#14b8a6', bgClass: 'bg-teal-500', bgLightClass: 'bg-teal-50', borderClass: 'border-l-teal-500', textClass: 'text-teal-500' },
+  { name: 'red', hex: '#ef4444', bgClass: 'bg-red-500', bgLightClass: 'bg-red-50', borderClass: 'border-l-red-500', textClass: 'text-red-500' },
+  { name: 'yellow', hex: '#eab308', bgClass: 'bg-yellow-500', bgLightClass: 'bg-yellow-50', borderClass: 'border-l-yellow-500', textClass: 'text-yellow-500' },
+  { name: 'indigo', hex: '#6366f1', bgClass: 'bg-indigo-500', bgLightClass: 'bg-indigo-50', borderClass: 'border-l-indigo-500', textClass: 'text-indigo-500' },
+  { name: 'cyan', hex: '#06b6d4', bgClass: 'bg-cyan-500', bgLightClass: 'bg-cyan-50', borderClass: 'border-l-cyan-500', textClass: 'text-cyan-500' },
 ]
 
 /**
  * Simple hash function to convert team ID to a number
  */
-function hashCode(str: string): number {
+function hashCode(str: string | undefined | null): number {
+  if (!str) {
+    // Return a default hash for undefined/null team IDs
+    return 0
+  }
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i)
@@ -32,8 +36,21 @@ function hashCode(str: string): number {
 
 /**
  * Get team color object based on team ID
+ * If a savedColor is provided, use that; otherwise fall back to hash-based assignment
  */
-export function getTeamColor(teamId: string) {
+export function getTeamColor(teamId: string | undefined | null, savedColor?: string | null) {
+  // If team has a saved color, use it
+  if (savedColor) {
+    const color = TEAM_COLORS.find(c => c.name === savedColor)
+    if (color) return color
+  }
+  
+  // If no teamId, return a default color
+  if (!teamId) {
+    return TEAM_COLORS[0] // Default to first color (blue)
+  }
+  
+  // Fall back to hash-based assignment
   const hash = hashCode(teamId)
   const index = hash % TEAM_COLORS.length
   return TEAM_COLORS[index]
@@ -41,13 +58,18 @@ export function getTeamColor(teamId: string) {
 
 /**
  * Get Tailwind CSS class for team color background
+ * @param teamId - The team ID (optional, for personal activities without a team)
+ * @param type - The type of color class to return
+ * @param savedColor - Optional saved color name from database
  */
-export function getTeamColorClass(teamId: string, type: 'bg' | 'border' | 'text' = 'bg'): string {
-  const color = getTeamColor(teamId)
+export function getTeamColorClass(teamId: string | undefined | null, type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg', savedColor?: string | null): string {
+  const color = getTeamColor(teamId, savedColor)
   
   switch (type) {
     case 'bg':
       return color.bgClass
+    case 'bgLight':
+      return color.bgLightClass
     case 'border':
       return color.borderClass
     case 'text':
@@ -60,14 +82,14 @@ export function getTeamColorClass(teamId: string, type: 'bg' | 'border' | 'text'
 /**
  * Get hex color value for team
  */
-export function getTeamColorHex(teamId: string): string {
+export function getTeamColorHex(teamId: string | undefined | null): string {
   return getTeamColor(teamId).hex
 }
 
 /**
  * Get color name for team
  */
-export function getTeamColorName(teamId: string): string {
+export function getTeamColorName(teamId: string | undefined | null): string {
   return getTeamColor(teamId).name
 }
 
@@ -78,4 +100,22 @@ export function getAllTeamColors() {
   return TEAM_COLORS
 }
 
+/**
+ * Get color classes for personal activities (distinct from team colors)
+ * Personal activities use dark brick red to differentiate from team events
+ */
+export function getPersonalActivityColorClass(type: 'bg' | 'border' | 'text' | 'bgLight' = 'bg'): string {
+  switch (type) {
+    case 'bg':
+      return 'bg-red-800'
+    case 'bgLight':
+      return 'bg-red-50'
+    case 'border':
+      return 'border-l-red-800'
+    case 'text':
+      return 'text-red-800'
+    default:
+      return 'bg-red-800'
+  }
+}
 

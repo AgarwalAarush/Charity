@@ -75,10 +75,52 @@ export default function SignUpPage() {
         }
       }
 
-      toast({
-        title: 'Account created!',
-        description: 'Welcome to TennisLife',
-      })
+      // Link roster members with matching email to this user account
+      try {
+        const linkResponse = await fetch('/api/auth/link-roster-members', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+
+        const linkData = await linkResponse.json()
+        
+        if (linkData.success) {
+          const messages = []
+          if (linkData.linked > 0) {
+            messages.push(`added to ${linkData.linked} team(s)`)
+          }
+          if (linkData.linkedInvitations > 0) {
+            messages.push(`${linkData.linkedInvitations} event invitation(s)`)
+          }
+          
+          if (messages.length > 0) {
+            toast({
+              title: 'Account created!',
+              description: `Welcome! You've been automatically ${messages.join(' and ')}.`,
+            })
+          } else {
+            toast({
+              title: 'Account created!',
+              description: 'Welcome to TennisLife',
+            })
+          }
+        } else {
+          toast({
+            title: 'Account created!',
+            description: 'Welcome to TennisLife',
+          })
+        }
+      } catch (linkError) {
+        // Don't fail signup if linking fails - user can still use the app
+        console.error('Error linking roster members:', linkError)
+        toast({
+          title: 'Account created!',
+          description: 'Welcome to TennisLife',
+        })
+      }
+
       router.push('/home')
       router.refresh()
     } else if (data.user) {
