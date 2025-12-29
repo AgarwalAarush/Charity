@@ -36,7 +36,7 @@ type Match = {
   duration?: number | null
   [key: string]: any
 }
-import { formatDate, formatTime, getWarmupMessage, cn } from '@/lib/utils'
+import { formatDate, formatTime, getWarmupMessage, cn, formatCourtLabel } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import {
   Select,
@@ -246,6 +246,26 @@ export default function MatchDetailPage() {
 
     if (teamData) {
       setTeam(teamData)
+      
+      // Load and format line_match_types
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      let matchTypes: string[] = []
+      if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+        matchTypes = teamData.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        const lines = teamData.total_lines || 3
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        const lines = teamData.total_lines || 3
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      setLineMatchTypes(matchTypes)
       
       // Load team facility
       if (teamData.facility_id) {
@@ -1017,7 +1037,9 @@ Thank you`)
                 {lineups.map((lineup) => (
                   <div key={lineup.id} className="border-b last:border-b-0 pb-2 last:pb-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Court {lineup.court_slot}</span>
+                      <span className="text-sm font-medium">
+                        {formatCourtLabel(lineup.court_slot, undefined, lineMatchTypes)}
+                      </span>
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
                       {lineup.player1?.full_name || 'TBD'}
@@ -1080,7 +1102,9 @@ Thank you`)
                 {courtScores.map((court) => (
                   <div key={court.court_slot} className="border-b last:border-b-0 pb-3 last:pb-0">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-semibold">Court {court.court_slot}</span>
+                      <span className="text-sm font-semibold">
+                        {formatCourtLabel(court.court_slot, undefined, lineMatchTypes)}
+                      </span>
                       <span className="text-sm text-muted-foreground">
                         {formatScoreDisplay(court.scores)}
                       </span>

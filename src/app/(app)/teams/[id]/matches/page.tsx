@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -11,10 +12,11 @@ import { createClient } from '@/lib/supabase/client'
 import { Match } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { MatchResultBadge } from '@/components/matches/match-result-badge'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, ArrowLeft } from 'lucide-react'
 
 export default function MatchesPage() {
   const params = useParams()
+  const router = useRouter()
   const teamId = params.id as string
   const [matches, setMatches] = useState<Match[]>([])
   const [loading, setLoading] = useState(true)
@@ -90,6 +92,13 @@ export default function MatchesPage() {
       <Header title="All Matches" />
 
       <main className="flex-1 p-4">
+        {/* Back Button */}
+        <div className="mb-4">
+          <Button variant="ghost" onClick={() => router.push(`/teams/${teamId}`)} size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Team
+          </Button>
+        </div>
         <Tabs defaultValue="upcoming" className="w-full">
           <TabsList className="grid w-full grid-cols-2 mb-4">
             <TabsTrigger value="upcoming">

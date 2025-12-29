@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { RosterMember, Match, Lineup, Availability } from '@/types/database.types'
-import { cn } from '@/lib/utils'
+import { cn, formatCourtLabel } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import {
   DndContext,
@@ -54,11 +54,13 @@ function SortablePlayer({
   onRemove,
   isSelectionMode = false,
   onPlayerClick,
+  isInUnavailableList = false,
 }: {
   player: PlayerWithAvailability
   onRemove: () => void
   isSelectionMode?: boolean
   onPlayerClick?: (player: PlayerWithAvailability) => void
+  isInUnavailableList?: boolean
 }) {
   const {
     attributes,
@@ -84,8 +86,13 @@ function SortablePlayer({
         return 'border-l-yellow-500'
       case 'last_resort':
         return 'border-l-purple-500'
+      case 'late':
+        return 'border-l-orange-500'
       default:
-        return 'border-l-gray-300'
+        // For players without availability status:
+        // If they're in the unavailable list, show red border
+        // Otherwise show gray
+        return isInUnavailableList ? 'border-l-red-500' : 'border-l-gray-300'
     }
   }
 
@@ -201,21 +208,24 @@ export default function LineupBuilderPage() {
     })
   )
 
-  // Split available players into available and unavailable
-  const { available, unavailable } = useMemo(() => {
+  // Split available players into available, unavailable, and not set
+  const { available, unavailable, notSet } = useMemo(() => {
     const available = availablePlayers.filter(p =>
       p.availability === 'available' || p.availability === 'maybe' || p.availability === 'late'
     )
     const unavailable = availablePlayers.filter(p =>
-      p.availability === 'unavailable' || !p.availability
+      p.availability === 'unavailable'
     )
-    return { available, unavailable }
+    const notSet = availablePlayers.filter(p =>
+      !p.availability || p.availability === undefined || p.availability === null
+    )
+    return { available, unavailable, notSet }
   }, [availablePlayers])
 
   // Combine all players for drag context
   const allDraggablePlayers = useMemo(() => 
-    [...available, ...unavailable].map(p => p.id),
-    [available, unavailable]
+    [...available, ...unavailable, ...notSet].map(p => p.id),
+    [available, unavailable, notSet]
   )
 
   useEffect(() => {
@@ -268,7 +278,8 @@ export default function LineupBuilderPage() {
       .single()
 
     if (teamData) {
-      setRatingLimit(teamData.rating_limit)
+      // Ensure rating_limit is a number
+      setRatingLimit(teamData.rating_limit ? Number(teamData.rating_limit) : null)
       const lines = teamData.total_lines || 3
       setTotalLines(lines)
       
@@ -336,12 +347,16 @@ export default function LineupBuilderPage() {
       const player1 = lineup?.player1_id
         ? playersWithAvail.find(p => p.id === lineup.player1_id) || null
         : null
+      // For singles courts, always set player2 to null (even if player2_id exists in DB)
+      // This ensures player2_id is not counted as assigned
       const player2 = isSingles ? null : (lineup?.player2_id
         ? playersWithAvail.find(p => p.id === lineup.player2_id) || null
         : null)
 
+      // Only add players to assigned list if they're actually assigned
+      // For singles, only player1 counts
       if (player1) assignedPlayerIds.add(player1.id)
-      if (player2) assignedPlayerIds.add(player2.id)
+      if (player2 && !isSingles) assignedPlayerIds.add(player2.id)
 
       return {
         courtNumber: courtNum,
@@ -456,25 +471,58 @@ export default function LineupBuilderPage() {
     setAvailablePlayers(prev => [...prev, player])
   }
 
-  function getCombinedRating(court: CourtSlot): number {
+  function getCombinedRating(court: CourtSlot, isSingles: boolean = false): number {
+    if (isSingles) {
+      // For singles, just return the player's rating (not doubled)
+      return court.player1?.ntrp_rating || 0
+    }
+    // For doubles, return the sum of both players
     return (court.player1?.ntrp_rating || 0) + (court.player2?.ntrp_rating || 0)
   }
 
-  function isOverLimit(court: CourtSlot): boolean {
+  function isOverLimit(court: CourtSlot, isSingles: boolean = false): boolean {
     if (!ratingLimit) return false
-    return getCombinedRating(court) > ratingLimit
+    // Allow ratings that are less than or equal to the limit
+    // For example, if limit is 6.0, then 6.0 should be allowed (not show warning)
+    const combinedRating = getCombinedRating(court, isSingles)
+    // Ensure both values are numbers
+    const numCombined = Number(combinedRating) || 0
+    const numLimit = Number(ratingLimit) || 0
+    
+    // The rating limit in the database is stored as the maximum per-player rating
+    // For doubles: we need to double it to get the combined limit (e.g., 3.0 per player = 6.0 combined)
+    // For singles: we use it directly as the individual player limit
+    const effectiveLimit = isSingles ? numLimit : numLimit * 2
+    
+    // Round to 1 decimal place (NTRP ratings are typically 0.5 increments)
+    const roundedCombined = Math.round(numCombined * 10) / 10
+    const roundedLimit = Math.round(effectiveLimit * 10) / 10
+    
+    // Only show warning if combined rating strictly exceeds the limit (not equal)
+    // Since we've rounded both values, direct comparison should work correctly
+    // 6.0 > 6.0 = false (no warning) ✓
+    // 6.1 > 6.0 = true (warning) ✓
+    const isOver = roundedCombined > roundedLimit
+    
+    return isOver
   }
 
   async function saveLineup() {
     const supabase = createClient()
 
     for (const court of courts) {
+      const matchType = lineMatchTypes[court.courtNumber - 1] || 'Doubles Match'
+      const isSingles = matchType === 'Singles Match'
+      
+      // For singles courts, always set player2_id to null
+      const player2Id = isSingles ? null : (court.player2?.id || null)
+      
       if (court.lineupId) {
         await supabase
           .from('lineups')
           .update({
             player1_id: court.player1?.id || null,
-            player2_id: court.player2?.id || null,
+            player2_id: player2Id,
           })
           .eq('id', court.lineupId)
       } else if (court.player1 || court.player2) {
@@ -482,7 +530,7 @@ export default function LineupBuilderPage() {
           match_id: matchId,
           court_slot: court.courtNumber,
           player1_id: court.player1?.id || null,
-          player2_id: court.player2?.id || null,
+          player2_id: player2Id,
         })
       }
     }
@@ -499,13 +547,19 @@ export default function LineupBuilderPage() {
 
     // Save and mark as published
     for (const court of courts) {
+      const matchType = lineMatchTypes[court.courtNumber - 1] || 'Doubles Match'
+      const isSingles = matchType === 'Singles Match'
+      
+      // For singles courts, always set player2_id to null
+      const player2Id = isSingles ? null : (court.player2?.id || null)
+      
       if (court.player1 || court.player2) {
         if (court.lineupId) {
           await supabase
             .from('lineups')
             .update({
               player1_id: court.player1?.id || null,
-              player2_id: court.player2?.id || null,
+              player2_id: player2Id,
               is_published: true,
             })
             .eq('id', court.lineupId)
@@ -514,7 +568,7 @@ export default function LineupBuilderPage() {
             match_id: matchId,
             court_slot: court.courtNumber,
             player1_id: court.player1?.id || null,
-            player2_id: court.player2?.id || null,
+            player2_id: player2Id,
             is_published: true,
           })
         }
@@ -574,21 +628,21 @@ export default function LineupBuilderPage() {
               {courts.map((court, index) => {
                 const matchType = lineMatchTypes[index] || 'Doubles Match'
                 const isSingles = matchType === 'Singles Match'
+                const overLimit = isOverLimit(court, isSingles)
                 
                 return (
-                  <Card key={court.courtNumber} className={cn(isOverLimit(court) && 'border-red-500')}>
+                  <Card key={court.courtNumber} className={cn(overLimit && 'border-red-500')}>
                     <CardHeader className="p-3 pb-2">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-sm">
-                          Court {court.courtNumber}
-                          {isSingles && <span className="text-xs text-muted-foreground ml-2">(Singles)</span>}
+                          {formatCourtLabel(court.courtNumber, matchType, lineMatchTypes)}
                         </CardTitle>
                         {court.player1 && (isSingles || court.player2) && (
                           <div className="flex items-center gap-2">
-                            <Badge variant={isOverLimit(court) ? 'destructive' : 'secondary'}>
-                              {getCombinedRating(court).toFixed(1)}
+                            <Badge variant={overLimit ? 'destructive' : 'secondary'}>
+                              {getCombinedRating(court, isSingles).toFixed(1)}
                             </Badge>
-                            {isOverLimit(court) && (
+                            {overLimit && (
                               <AlertTriangle className="h-4 w-4 text-red-500" />
                             )}
                           </div>
@@ -676,6 +730,34 @@ export default function LineupBuilderPage() {
                             onRemove={() => {}}
                             isSelectionMode={!!selectedSlot}
                             onPlayerClick={handlePlayerClick}
+                            isInUnavailableList={true}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Not Set Players */}
+                <Card>
+                  <CardHeader className="p-3 pb-2">
+                    <CardTitle className="text-sm">Not Set ({notSet.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0">
+                    <div className="space-y-2">
+                      {notSet.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-2">
+                          All players have set availability
+                        </p>
+                      ) : (
+                        notSet.map(player => (
+                          <SortablePlayer
+                            key={player.id}
+                            player={player}
+                            onRemove={() => {}}
+                            isSelectionMode={!!selectedSlot}
+                            onPlayerClick={handlePlayerClick}
+                            isInUnavailableList={false}
                           />
                         ))
                       )}

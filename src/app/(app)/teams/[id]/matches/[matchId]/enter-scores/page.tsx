@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { Match, Team, RosterMember } from '@/types/database.types'
-import { formatDate, formatTime } from '@/lib/utils'
+import { formatDate, formatTime, formatCourtLabel } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { CourtScoreCard } from '@/components/matches/court-score-card'
 import { MatchScore, CourtResult, calculateMatchResult, generateScoreSummary } from '@/lib/score-utils'
@@ -120,6 +120,26 @@ export default function EnterScoresPage() {
     }
 
     setTeam(teamData)
+    
+    // Load and format line_match_types
+    const matchTypeMap: Record<string, string> = {
+      'doubles': 'Doubles Match',
+      'singles': 'Singles Match',
+      'mixed': 'Mixed Doubles',
+    }
+    let matchTypes: string[] = []
+    if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+      matchTypes = teamData.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+      const lines = teamData.total_lines || 3
+      while (matchTypes.length < lines) {
+        matchTypes.push('Doubles Match')
+      }
+      matchTypes = matchTypes.slice(0, lines)
+    } else {
+      const lines = teamData.total_lines || 3
+      matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+    }
+    setLineMatchTypes(matchTypes)
 
     // Check if user is captain
     const captain = teamData.captain_id === user.id || teamData.co_captain_id === user.id
@@ -577,7 +597,9 @@ export default function EnterScoresPage() {
           <CardContent className="space-y-4">
             {courts.map((court, index) => (
               <div key={court.courtNumber} className="border rounded-lg p-4 space-y-2">
-                <Label className="text-base font-semibold">Court {court.courtNumber}</Label>
+                <Label className="text-base font-semibold">
+                  {formatCourtLabel(court.courtNumber, undefined, lineMatchTypes)}
+                </Label>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor={`court-${court.courtNumber}-player1`}>Player 1</Label>
@@ -631,7 +653,7 @@ export default function EnterScoresPage() {
               if (!court.player1 || !court.player2) {
                 return (
                   <div key={court.courtNumber} className="border rounded-lg p-4 text-sm text-muted-foreground">
-                    Court {court.courtNumber}: Assign players above to enter scores
+                    {formatCourtLabel(court.courtNumber, undefined, lineMatchTypes)}: Assign players above to enter scores
                   </div>
                 )
               }

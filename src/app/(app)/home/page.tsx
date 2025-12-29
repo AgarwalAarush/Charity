@@ -6,7 +6,7 @@ import { Header } from '@/components/layout/header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { formatDate, formatTime, cn } from '@/lib/utils'
+import { formatDate, formatTime, cn, formatCourtLabel } from '@/lib/utils'
 import { calculateMatchAvailability } from '@/lib/availability-utils'
 import { getEffectiveUserId, getEffectiveUserEmail } from '@/lib/impersonation'
 import {
@@ -128,6 +128,7 @@ export default function HomePage() {
     losses: number
     winPercentage: number
   } | null>(null)
+  const [teamMatchTypes, setTeamMatchTypes] = useState<Record<string, string[]>>({})
   const { toast } = useToast()
 
   useEffect(() => {
@@ -302,6 +303,37 @@ export default function HomePage() {
     // Get lineups and availability for these matches
     const matchIds = matches.map(m => m.id)
 
+    // Load team configurations to determine which courts are singles
+    const { data: teamsData } = await supabase
+      .from('teams')
+      .select('id, total_lines, line_match_types')
+      .in('id', teamIds)
+
+    // Build a map of team_id -> court match types
+    const teamMatchTypes: Record<string, string[]> = {}
+    teamsData?.forEach(team => {
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      let matchTypes: string[] = []
+      if (team.line_match_types && Array.isArray(team.line_match_types)) {
+        matchTypes = team.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        const lines = team.total_lines || 3
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        const lines = team.total_lines || 3
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      teamMatchTypes[team.id] = matchTypes
+    })
+    
+    setTeamMatchTypes(teamMatchTypes)
+
     const { data: lineups } = await supabase
       .from('lineups')
       .select(`
@@ -311,6 +343,7 @@ export default function HomePage() {
         player1_id,
         player2_id,
         is_published,
+        matches!inner(team_id),
         player1:roster_members!lineups_player1_id_fkey (
           id,
           full_name
@@ -339,11 +372,23 @@ export default function HomePage() {
         }
         const player1 = Array.isArray(lineup.player1) ? lineup.player1[0] : lineup.player1
         const player2 = Array.isArray(lineup.player2) ? lineup.player2[0] : lineup.player2
+        
+        // Get team_id from the match
+        const match = Array.isArray(lineup.matches) ? lineup.matches[0] : lineup.matches
+        const teamId = match?.team_id
+        
+        // Check if this court is singles
+        const matchTypes = teamId ? teamMatchTypes[teamId] : []
+        const courtIndex = lineup.court_slot - 1
+        const matchType = matchTypes[courtIndex] || 'Doubles Match'
+        const isSingles = matchType === 'Singles Match'
+        
+        // For singles courts, don't show player2
         lineupsByMatch[lineup.match_id].push({
           id: lineup.id,
           court_slot: lineup.court_slot,
           player1: player1 ? { id: player1.id, full_name: player1.full_name } : null,
-          player2: player2 ? { id: player2.id, full_name: player2.full_name } : null,
+          player2: isSingles ? null : (player2 ? { id: player2.id, full_name: player2.full_name } : null),
         })
       })
     }
@@ -985,7 +1030,11 @@ export default function HomePage() {
                   {nextMatch.partner_name && (
                     <div className="pt-2 border-t border-green-300">
                       <p className="text-sm">
-                        Court {nextMatch.court_slot} with <span className="font-medium">{nextMatch.partner_name}</span>
+                        {formatCourtLabel(
+                          nextMatch.court_slot || 1,
+                          undefined,
+                          teamMatchTypes[nextMatch.team_id] || []
+                        )} with <span className="font-medium">{nextMatch.partner_name}</span>
                       </p>
                     </div>
                   )}
@@ -1127,7 +1176,13 @@ export default function HomePage() {
                             <div className="mt-2 pt-2 border-t space-y-1">
                               {matchLineups[match.id].map((lineup) => (
                                 <div key={lineup.id} className="text-xs">
-                                  <span className="font-medium">Court {lineup.court_slot}:</span>
+                                  <span className="font-medium">
+                                    {formatCourtLabel(
+                                      lineup.court_slot,
+                                      undefined,
+                                      teamMatchTypes[match.team_id] || []
+                                    )}:
+                                  </span>
                                   <span className="text-muted-foreground ml-1">
                                     {lineup.player1?.full_name || 'TBD'}
                                     {lineup.player2 && ` & ${lineup.player2.full_name}`}
