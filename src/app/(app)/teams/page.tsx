@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useEffect, useState, use, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
@@ -12,7 +12,7 @@ import { Team } from '@/types/database.types'
 import { Plus, Users, Calendar, ChevronRight, ArrowLeft } from 'lucide-react'
 import { CreateTeamDialog } from '@/components/teams/create-team-dialog'
 
-export default function TeamsPage() {
+function TeamsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   // Handle async searchParams in Next.js 15
@@ -159,5 +159,17 @@ export default function TeamsPage() {
         }}
       />
     </div>
+  )
+}
+
+export default function TeamsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <TeamsPageContent />
+    </Suspense>
   )
 }

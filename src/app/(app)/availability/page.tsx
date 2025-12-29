@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { use } from 'react'
 import { Header } from '@/components/layout/header'
@@ -42,7 +42,7 @@ interface EventItem {
   currentStatus?: AvailabilityStatus
 }
 
-export default function BulkAvailabilityPage() {
+function BulkAvailabilityPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   // Handle async searchParams in Next.js 15
@@ -1060,6 +1060,18 @@ export default function BulkAvailabilityPage() {
         </Card>
       </main>
     </div>
+  )
+}
+
+export default function BulkAvailabilityPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <BulkAvailabilityPageContent />
+    </Suspense>
   )
 }
 
