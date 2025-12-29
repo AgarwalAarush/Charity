@@ -960,10 +960,10 @@ export default function CalendarPage() {
                   localStorage.setItem('calendar-view-mode', newMode)
                 }
               }} className="flex-1">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="week">Week</TabsTrigger>
-                  <TabsTrigger value="month">Month</TabsTrigger>
-                  <TabsTrigger value="list">List</TabsTrigger>
+                <TabsList className="grid grid-cols-3 gap-1 w-auto">
+                  <TabsTrigger value="week" className="px-2 sm:px-3">Week</TabsTrigger>
+                  <TabsTrigger value="month" className="px-2 sm:px-3">Month</TabsTrigger>
+                  <TabsTrigger value="list" className="px-2 sm:px-3">List</TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
