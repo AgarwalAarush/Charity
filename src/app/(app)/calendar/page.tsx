@@ -1769,6 +1769,8 @@ function CalendarPageContent() {
                         <div className="flex-1 min-w-0" onClick={() => {
                           if (item.type === 'match') {
                             router.push(`/teams/${item.teamId}/matches/${item.id}`)
+                          } else if (item.type === 'personal_activity') {
+                            router.push(`/activities/${item.id}`)
                           } else {
                             router.push(`/teams/${item.teamId}/events/${item.id}`)
                           }
