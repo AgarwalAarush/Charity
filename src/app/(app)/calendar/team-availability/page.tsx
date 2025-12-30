@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState, Suspense, use } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -37,7 +37,11 @@ interface TeamEvent {
 function TeamAvailabilityContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const teamId = searchParams.get('teamId')
+  // Handle async searchParams in Next.js 15 - useSearchParams() returns a Promise in some contexts
+  const resolvedSearchParams = searchParams && typeof searchParams === 'object' && 'then' in searchParams
+    ? use(searchParams as unknown as Promise<URLSearchParams>)
+    : searchParams
+  const teamId = resolvedSearchParams.get('teamId')
   const [events, setEvents] = useState<TeamEvent[]>([])
   const [allEvents, setAllEvents] = useState<TeamEvent[]>([]) // Store all events for filtering
   const [teams, setTeams] = useState<Array<{ id: string; name: string; color?: string | null }>>([])
@@ -536,7 +540,7 @@ function TeamAvailabilityContent() {
       case 'unavailable':
         return 'Unavailable'
       case 'maybe':
-        return 'Maybe'
+        return 'Unsure'
       case 'last_resort':
         return 'Last Resort'
       default:
@@ -718,7 +722,18 @@ function TeamAvailabilityContent() {
                     <div className="flex-1 min-w-0 flex items-center gap-2">
                       {/* Badge */}
                       {event.type === 'match' ? (
-                        <Badge className="bg-emerald-700 text-white text-xs shrink-0">M</Badge>
+                        <Badge 
+                          variant="default" 
+                          className="bg-blue-900 text-white text-[10px] px-1 py-0 h-4 shrink-0"
+                        >
+                          Match {event.is_home !== undefined && (
+                            event.is_home ? (
+                              <span className="ml-1 bg-teal-500 text-white px-1 rounded">(H)</span>
+                            ) : (
+                              <span className="ml-1 bg-orange-500 text-white px-1 rounded">(A)</span>
+                            )
+                          )}
+                        </Badge>
                       ) : event.event_type && (
                         <div className="shrink-0">
                           <EventTypeBadge eventType={event.event_type} />
@@ -787,7 +802,7 @@ function TeamAvailabilityContent() {
                           )}
                           onClick={() => updateAvailability(event.id, 'maybe')}
                           disabled={saving[event.id]}
-                          title="Maybe"
+                          title="Unsure"
                         >
                           <HelpCircle className="h-4 w-4" />
                         </Button>

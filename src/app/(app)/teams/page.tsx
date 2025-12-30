@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, use, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -12,15 +12,21 @@ import { Team } from '@/types/database.types'
 import { Plus, Users, Calendar, ChevronRight, ArrowLeft } from 'lucide-react'
 import { CreateTeamDialog } from '@/components/teams/create-team-dialog'
 
-export default function TeamsPage() {
+function TeamsPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Handle async searchParams in Next.js 15
+  const resolvedSearchParams = searchParams && typeof searchParams === 'object' && 'then' in searchParams
+    ? use(searchParams as Promise<URLSearchParams>)
+    : (searchParams as URLSearchParams)
+  const viewParam = resolvedSearchParams.get('view')
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
 
   useEffect(() => {
     loadTeams()
-  }, [])
+  }, [viewParam])
 
   async function loadTeams() {
     const supabase = createClient()
@@ -54,6 +60,20 @@ export default function TeamsPage() {
 
     setTeams(uniqueTeams)
     setLoading(false)
+
+    // Check if we should redirect to the last viewed team
+    // Only redirect if:
+    // 1. view=all is NOT in the URL (user didn't explicitly select "All Teams")
+    // 2. There are teams
+    // 3. A valid last viewed team exists
+    if (viewParam !== 'all' && uniqueTeams.length > 0) {
+      const lastViewedTeamId = localStorage.getItem('lastViewedTeamId')
+      if (lastViewedTeamId && uniqueTeams.some(t => t.id === lastViewedTeamId)) {
+        // Redirect to the last viewed team's detail page
+        router.replace(`/teams/${lastViewedTeamId}`)
+        return
+      }
+    }
   }
 
   if (loading) {
@@ -139,5 +159,17 @@ export default function TeamsPage() {
         }}
       />
     </div>
+  )
+}
+
+export default function TeamsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <TeamsPageContent />
+    </Suspense>
   )
 }

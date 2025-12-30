@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, useMemo, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { use } from 'react'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,7 +21,7 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, Check, X, HelpCircle, Clock, Save, Users, ChevronRight, ArrowLeft, Calendar } from 'lucide-react'
+import { Loader2, Check, X, HelpCircle, Clock, Save, Users, ChevronRight, ArrowLeft, Calendar, Grid3x3, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Event, Match, Team } from '@/types/database.types'
 import Link from 'next/link'
@@ -41,8 +42,13 @@ interface EventItem {
   currentStatus?: AvailabilityStatus
 }
 
-export default function BulkAvailabilityPage() {
+function BulkAvailabilityPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Handle async searchParams in Next.js 15
+  const resolvedSearchParams = searchParams && typeof searchParams === 'object' && 'then' in searchParams
+    ? use(searchParams as unknown as Promise<URLSearchParams>)
+    : searchParams
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -58,8 +64,23 @@ export default function BulkAvailabilityPage() {
   const [showPersonalActivities, setShowPersonalActivities] = useState(false)
 
   useEffect(() => {
+    // Check if user explicitly wants bulk view (from button click)
+    const viewParam = resolvedSearchParams?.get('view')
+    const wantsBulkView = viewParam === 'bulk'
+    
+    // Only auto-redirect if user didn't explicitly request bulk view
+    if (!wantsBulkView) {
+      const lastViewedTeamId = localStorage.getItem('lastViewedAvailabilityTeamId')
+      if (lastViewedTeamId) {
+        // Redirect to the last viewed team's grid
+        router.replace(`/teams/${lastViewedTeamId}/availability`)
+        return
+      }
+    }
+    
+    // Load data normally (either bulk view requested or no last viewed team)
     loadData()
-  }, [showPersonalActivities])
+  }, [router, resolvedSearchParams])
 
   async function loadData() {
     try {
@@ -687,7 +708,7 @@ export default function BulkAvailabilityPage() {
       case 'unavailable':
         return 'Unavailable'
       case 'maybe':
-        return 'Maybe'
+        return 'Unsure'
       case 'last_resort':
         return 'Last Resort'
       default:
@@ -708,12 +729,30 @@ export default function BulkAvailabilityPage() {
       <Header title="Availability" />
 
       <main className="flex-1 p-4 space-y-4 pb-20">
-        {/* Back Button */}
-        <div className="flex items-center justify-between mb-2">
-          <Button variant="ghost" onClick={() => router.back()} size="sm">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
+        {/* Back Button and Team Grid Button */}
+        <div className="flex items-center justify-between mb-2 gap-2">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => router.back()} size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+            {selectedTeamId !== 'all' && teams.find(t => t.id === selectedTeamId) && (
+              <Link href={`/teams/${selectedTeamId}/availability`}>
+                <Button variant="outline" size="sm" title="View team availability grid">
+                  <Grid3x3 className="mr-2 h-4 w-4" />
+                  Team Grid
+                </Button>
+              </Link>
+            )}
+            {selectedTeamId === 'all' && teams.length > 0 && (
+              <Link href={`/teams/${localStorage.getItem('lastViewedAvailabilityTeamId') || teams[0]?.id}/availability`}>
+                <Button variant="outline" size="sm" title="View team availability grid">
+                  <Grid3x3 className="mr-2 h-4 w-4" />
+                  Team Grid
+                </Button>
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* Captain Team Availability Grids */}
@@ -829,7 +868,7 @@ export default function BulkAvailabilityPage() {
                       <SelectItem value="maybe">
                         <div className="flex items-center gap-2">
                           <HelpCircle className="h-4 w-4 text-yellow-500" />
-                          <span>Maybe</span>
+                          <span>Unsure</span>
                         </div>
                       </SelectItem>
                       <SelectItem value="last_resort">
@@ -1001,7 +1040,7 @@ export default function BulkAvailabilityPage() {
                           <SelectItem value="maybe">
                             <div className="flex items-center gap-2">
                               <HelpCircle className="h-4 w-4 text-yellow-500" />
-                              <span>Maybe</span>
+                              <span>Unsure</span>
                             </div>
                           </SelectItem>
                           <SelectItem value="last_resort">
@@ -1021,6 +1060,18 @@ export default function BulkAvailabilityPage() {
         </Card>
       </main>
     </div>
+  )
+}
+
+export default function BulkAvailabilityPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <BulkAvailabilityPageContent />
+    </Suspense>
   )
 }
 

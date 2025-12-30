@@ -36,7 +36,7 @@ type Match = {
   duration?: number | null
   [key: string]: any
 }
-import { formatDate, formatTime, getWarmupMessage, cn } from '@/lib/utils'
+import { formatDate, formatTime, getWarmupMessage, cn, formatCourtLabel } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import {
   Select,
@@ -134,6 +134,7 @@ export default function MatchDetailPage() {
   const [showWarmupVenueDialog, setShowWarmupVenueDialog] = useState(false)
   const [teamFacilityName, setTeamFacilityName] = useState<string | null>(null)
   const [teamFacilityAddress, setTeamFacilityAddress] = useState<string | null>(null)
+  const [lineMatchTypes, setLineMatchTypes] = useState<string[]>([])
   const [checklist, setChecklist] = useState<ChecklistItem[]>([
     { days: 14, task: 'Order balls', completed: false },
     { days: 10, task: 'Email opponent captain', completed: false },
@@ -247,6 +248,26 @@ export default function MatchDetailPage() {
     if (teamData) {
       setTeam(teamData)
       
+      // Load and format line_match_types
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      let matchTypes: string[] = []
+      if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+        matchTypes = teamData.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        const lines = teamData.total_lines || 3
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        const lines = teamData.total_lines || 3
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      setLineMatchTypes(matchTypes)
+      
       // Load team facility
       if (teamData.facility_id) {
         // Load venue details if facility_id is set
@@ -267,14 +288,16 @@ export default function MatchDetailPage() {
       }
       
       // Check if current user is captain or co-captain
-      if (user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      const isUserCaptain = user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)
+      if (isUserCaptain) {
         setIsCaptain(true)
       }
+      
+      // Load court-by-court scores if available (pass captain status)
+      await loadCourtScores(isUserCaptain || false)
+      await loadLineups(isUserCaptain || false)
     }
 
-    // Load court-by-court scores if available
-    await loadCourtScores()
-    await loadLineups()
     await loadAvailabilitySummary()
     // Warmup venues will be loaded after warmupCourt is set
 
@@ -286,11 +309,11 @@ export default function MatchDetailPage() {
     }
   }
 
-  async function loadLineups() {
+  async function loadLineups(isUserCaptain: boolean = false) {
     const supabase = createClient()
     
-    // Get all lineups for this match (published and unpublished)
-    const { data: lineupsData } = await supabase
+    // Load lineups - captains see all, players only see published
+    let lineupsQuery = supabase
       .from('lineups')
       .select(`
         id,
@@ -299,7 +322,13 @@ export default function MatchDetailPage() {
         player2:roster_members!lineups_player2_id_fkey(full_name)
       `)
       .eq('match_id', matchId)
-      .order('court_slot', { ascending: true })
+    
+    // If user is not a captain, filter to only published lineups
+    if (!isUserCaptain) {
+      lineupsQuery = lineupsQuery.eq('is_published', true)
+    }
+    
+    const { data: lineupsData } = await lineupsQuery.order('court_slot', { ascending: true })
 
     if (lineupsData) {
       setLineups(lineupsData)
@@ -387,11 +416,11 @@ export default function MatchDetailPage() {
     })
   }
 
-  async function loadCourtScores() {
+  async function loadCourtScores(isUserCaptain: boolean = false) {
     const supabase = createClient()
-
-    // Get lineups for this match
-    const { data: lineups } = await supabase
+    
+    // Load lineups - captains see all, players only see published
+    let lineupsQuery = supabase
       .from('lineups')
       .select(`
         id,
@@ -400,8 +429,13 @@ export default function MatchDetailPage() {
         player2:roster_members!lineups_player2_id_fkey(full_name)
       `)
       .eq('match_id', matchId)
-      .eq('is_published', true)
-      .order('court_slot', { ascending: true })
+    
+    // If user is not a captain, filter to only published lineups
+    if (!isUserCaptain) {
+      lineupsQuery = lineupsQuery.eq('is_published', true)
+    }
+    
+    const { data: lineups } = await lineupsQuery.order('court_slot', { ascending: true })
 
     if (!lineups || lineups.length === 0) return
 
@@ -1017,7 +1051,9 @@ Thank you`)
                 {lineups.map((lineup) => (
                   <div key={lineup.id} className="border-b last:border-b-0 pb-2 last:pb-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Court {lineup.court_slot}</span>
+                      <span className="text-sm font-medium">
+                        {formatCourtLabel(lineup.court_slot, undefined, lineMatchTypes)}
+                      </span>
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
                       {lineup.player1?.full_name || 'TBD'}
@@ -1080,7 +1116,9 @@ Thank you`)
                 {courtScores.map((court) => (
                   <div key={court.court_slot} className="border-b last:border-b-0 pb-3 last:pb-0">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-semibold">Court {court.court_slot}</span>
+                      <span className="text-sm font-semibold">
+                        {formatCourtLabel(court.court_slot, undefined, lineMatchTypes)}
+                      </span>
                       <span className="text-sm text-muted-foreground">
                         {formatScoreDisplay(court.scores)}
                       </span>

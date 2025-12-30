@@ -43,6 +43,7 @@ export function ScoreEntryDialog({
   const [scores, setScores] = useState<Map<string, MatchScore[]>>(new Map())
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [lineMatchTypes, setLineMatchTypes] = useState<string[]>([])
   const { toast } = useToast()
 
   useEffect(() => {
@@ -90,6 +91,34 @@ export function ScoreEntryDialog({
     }
 
     setLineups(lineupsData as any[])
+    
+    // Load team configuration for court labels
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('total_lines, line_match_types')
+      .eq('id', teamId)
+      .single()
+    
+    if (teamData) {
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      let matchTypes: string[] = []
+      if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+        matchTypes = teamData.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        const lines = teamData.total_lines || 3
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        const lines = teamData.total_lines || 3
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      setLineMatchTypes(matchTypes)
+    }
 
     // Load existing scores if any
     const lineupIds = lineupsData.map(l => l.id)
@@ -277,6 +306,7 @@ export function ScoreEntryDialog({
                 lineupId={lineup.id}
                 existingScores={scores.get(lineup.id) || []}
                 onChange={handleScoreChange}
+                lineMatchTypes={lineMatchTypes}
               />
             ))}
 

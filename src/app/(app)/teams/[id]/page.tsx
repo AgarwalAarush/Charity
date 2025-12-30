@@ -34,7 +34,7 @@ type Event = {
   duration?: number | null
   [key: string]: any
 }
-import { formatDate, formatTime, calculateEndTime, cn } from '@/lib/utils'
+import { formatDate, formatTime, calculateEndTime, cn, formatCourtLabel } from '@/lib/utils'
 import { getEventTypeLabel, getEventTypeBadgeClass } from '@/lib/event-type-colors'
 import { EventTypeBadge } from '@/components/events/event-type-badge'
 import {
@@ -51,8 +51,7 @@ import {
   Check,
   X,
   HelpCircle,
-  Clock,
-  ArrowRightLeft
+  Clock
 } from 'lucide-react'
 import {
   Select,
@@ -89,17 +88,26 @@ export default function TeamDetailPage() {
   const [expandedLineups, setExpandedLineups] = useState<Record<string, boolean>>({})
   const [matchLineups, setMatchLineups] = useState<Record<string, any[]>>({})
   const [userTeams, setUserTeams] = useState<Array<{ id: string; name: string }>>([])
+  const [lineMatchTypes, setLineMatchTypes] = useState<string[]>([])
 
   useEffect(() => {
     loadTeamData()
+    // Save current team to localStorage
+    if (teamId) {
+      localStorage.setItem('lastViewedTeamId', teamId)
+    }
   }, [teamId])
 
   async function loadTeamData() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
-    // Load all teams the user is on
+    // Load all teams the user is on (roster member or captain/co-captain)
     if (user) {
+      const allTeams: Array<{ id: string; name: string }> = []
+      const teamIds = new Set<string>()
+
+      // Get teams where user is a roster member
       const { data: rosterMemberships } = await supabase
         .from('roster_members')
         .select('team_id, teams(id, name)')
@@ -107,15 +115,34 @@ export default function TeamDetailPage() {
         .eq('is_active', true)
 
       if (rosterMemberships) {
-        const teams = rosterMemberships
-          .map((rm: any) => {
-            const team = Array.isArray(rm.teams) ? rm.teams[0] : rm.teams
-            return team ? { id: team.id, name: team.name } : null
-          })
-          .filter((t): t is { id: string; name: string } => t !== null)
-        
-        setUserTeams(teams)
+        rosterMemberships.forEach((rm: any) => {
+          const team = Array.isArray(rm.teams) ? rm.teams[0] : rm.teams
+          if (team && !teamIds.has(team.id)) {
+            teamIds.add(team.id)
+            allTeams.push({ id: team.id, name: team.name })
+          }
+        })
       }
+
+      // Get teams where user is captain or co-captain
+      const { data: captainTeams } = await supabase
+        .from('teams')
+        .select('id, name')
+        .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
+        .order('name')
+
+      if (captainTeams) {
+        captainTeams.forEach(team => {
+          if (!teamIds.has(team.id)) {
+            teamIds.add(team.id)
+            allTeams.push({ id: team.id, name: team.name })
+          }
+        })
+      }
+
+      // Sort by name
+      allTeams.sort((a, b) => a.name.localeCompare(b.name))
+      setUserTeams(allTeams)
     }
 
     const { data: teamData } = await supabase
@@ -124,11 +151,33 @@ export default function TeamDetailPage() {
       .eq('id', teamId)
       .single()
 
+    let isUserCaptain = false
     if (teamData) {
       setTeam(teamData)
       
+      // Load and format line_match_types
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      let matchTypes: string[] = []
+      if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+        matchTypes = teamData.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        const lines = teamData.total_lines || 3
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        const lines = teamData.total_lines || 3
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      setLineMatchTypes(matchTypes)
+      
       // Check if current user is captain
-      if (user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)) {
+      isUserCaptain = user && (teamData.captain_id === user.id || teamData.co_captain_id === user.id)
+      if (isUserCaptain) {
         setIsCaptain(true)
         
         // Load pending invitations count for captains
@@ -175,7 +224,10 @@ export default function TeamDetailPage() {
       // Load lineups for all matches
       const matchIds = matchData.map(m => m.id)
       if (matchIds.length > 0) {
-        const { data: lineupsData } = await supabase
+        // Use the isUserCaptain value we determined above
+        
+        // Load lineups - captains see all, players only see published
+        let lineupsQuery = supabase
           .from('lineups')
           .select(`
             id,
@@ -185,6 +237,13 @@ export default function TeamDetailPage() {
             player2:roster_members!lineups_player2_id_fkey(full_name)
           `)
           .in('match_id', matchIds)
+        
+        // If user is not a captain, filter to only published lineups
+        if (!isUserCaptain) {
+          lineupsQuery = lineupsQuery.eq('is_published', true)
+        }
+        
+        const { data: lineupsData } = await lineupsQuery
           .order('match_id')
           .order('court_slot', { ascending: true })
 
@@ -321,34 +380,35 @@ export default function TeamDetailPage() {
     <div className="flex flex-col min-h-screen">
       <Header title={team.name} />
       
-      {/* Team Switcher - Only show if user is on multiple teams */}
-      {userTeams.length > 1 && (
-        <div className="px-4 pb-2">
-          <Card>
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium text-muted-foreground">Switch Team:</span>
-                <Select
-                  value={teamId}
-                  onValueChange={(newTeamId) => {
-                    router.push(`/teams/${newTeamId}`)
-                  }}
-                >
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {userTeams.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
+      {/* Team Selector at the top */}
+      {userTeams.length > 0 && (
+        <div className="px-4 pt-2 pb-2 border-b">
+          <div className="flex items-center gap-2">
+            <Select
+              value={teamId}
+              onValueChange={(newTeamId) => {
+                if (newTeamId === 'all') {
+                  // Navigate to teams list page with a query parameter to prevent redirect
+                  router.push('/teams?view=all')
+                } else {
+                  localStorage.setItem('lastViewedTeamId', newTeamId)
+                  router.push(`/teams/${newTeamId}`)
+                }
+              }}
+            >
+              <SelectTrigger className="w-[250px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Teams</SelectItem>
+                {userTeams.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       )}
 
@@ -571,7 +631,13 @@ export default function TeamDetailPage() {
                           {lineups.length > 0 ? (
                             lineups.map((lineup) => (
                               <div key={lineup.id} className="text-xs">
-                                <span className="font-medium">Court {lineup.court_slot}:</span>
+                                <span className="font-medium">
+                                  {formatCourtLabel(
+                                    lineup.court_slot,
+                                    undefined,
+                                    lineMatchTypes
+                                  )}:
+                                </span>
                                 <span className="text-muted-foreground ml-1">
                                   {lineup.player1?.full_name || 'TBD'}
                                   {lineup.player2 && ` & ${lineup.player2.full_name}`}
@@ -659,7 +725,7 @@ export default function TeamDetailPage() {
                           const statusConfig = {
                             available: { icon: Check, label: 'Available', color: 'text-green-500' },
                             unavailable: { icon: X, label: 'Unavailable', color: 'text-red-500' },
-                            maybe: { icon: HelpCircle, label: 'Maybe', color: 'text-yellow-500' },
+                            maybe: { icon: HelpCircle, label: 'Unsure', color: 'text-yellow-500' },
                             last_resort: { icon: HelpCircle, label: 'Last Resort', color: 'text-purple-500' },
                           }
                           const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.unavailable

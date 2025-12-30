@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -22,7 +22,7 @@ import {
   getPreviousWeek,
   getNextWeek
 } from '@/lib/calendar-utils'
-import { Plus, Check, X, HelpCircle, ArrowLeft, CheckSquare, Square, Save, CheckCircle2, Users } from 'lucide-react'
+import { Plus, Check, X, HelpCircle, ArrowLeft, CheckSquare, Square, Save, CheckCircle2, Users, Calendar } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -30,13 +30,19 @@ import { WeekView } from '@/components/calendar/week-view'
 import { MonthView } from '@/components/calendar/month-view'
 import { CalendarItemTile } from '@/components/calendar/calendar-item-tile'
 import { AddEventDialog } from '@/components/teams/add-event-dialog'
+import { AddPersonalEventDialog } from '@/components/activities/add-personal-event-dialog'
+import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
 import { useToast } from '@/hooks/use-toast'
 import { startOfWeek, addDays } from 'date-fns'
 import { getTeamColor } from '@/lib/team-colors'
-import { cn, formatDate } from '@/lib/utils'
+import { cn, formatDate, formatTime } from '@/lib/utils'
 import { getEffectiveUserId, getEffectiveUserEmail } from '@/lib/impersonation'
+import { PersonalEvent, EventInvitation, EventAttendee } from '@/types/database.types'
+import Link from 'next/link'
+import { ChevronRight, Clock } from 'lucide-react'
 
 type ViewMode = 'week' | 'month' | 'list'
+type EventViewType = 'all' | 'team' | 'personal'
 
 interface TeamInfo {
   id: string
@@ -45,13 +51,15 @@ interface TeamInfo {
   rosterMemberId?: string
 }
 
-export default function CalendarPage() {
+function CalendarPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [currentDate, setCurrentDate] = useState(new Date())
   // Initialize with default values to avoid hydration mismatch
   // Load from localStorage in useEffect after mount
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [numWeeks, setNumWeeks] = useState(3)
+  const [eventViewType, setEventViewType] = useState<EventViewType>('all')
   const [calendarItems, setCalendarItems] = useState<CalendarItem[]>([])
   const [teams, setTeams] = useState<TeamInfo[]>([])
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
@@ -65,11 +73,30 @@ export default function CalendarPage() {
   const [bulkSelectMode, setBulkSelectMode] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [bulkStatus, setBulkStatus] = useState<'available' | 'maybe' | 'unavailable'>('available')
+  const [createdActivities, setCreatedActivities] = useState<any[]>([])
+  const [invitedActivities, setInvitedActivities] = useState<any[]>([])
+  const [activityFilterType, setActivityFilterType] = useState<string>('all')
+  const [activityFilterStatus, setActivityFilterStatus] = useState<string>('upcoming')
+  const [showCreateActivityDialog, setShowCreateActivityDialog] = useState(false)
   const { toast } = useToast()
 
   // Load saved preferences from localStorage after mount (client-side only)
   // This prevents hydration mismatch between server and client
   useEffect(() => {
+    // Read view from URL query param first, then localStorage
+    const viewParam = searchParams.get('view')
+    if (viewParam && ['all', 'team', 'personal'].includes(viewParam)) {
+      setEventViewType(viewParam as EventViewType)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('calendar-event-view-type', viewParam)
+      }
+    } else {
+      const savedEventViewType = localStorage.getItem('calendar-event-view-type')
+      if (savedEventViewType && ['all', 'team', 'personal'].includes(savedEventViewType)) {
+        setEventViewType(savedEventViewType as EventViewType)
+      }
+    }
+
     const savedViewMode = localStorage.getItem('calendar-view-mode')
     if (savedViewMode && ['week', 'month', 'list'].includes(savedViewMode)) {
       setViewMode(savedViewMode as ViewMode)
@@ -85,7 +112,7 @@ export default function CalendarPage() {
     if (savedHideOrganizerOnly === 'true') {
       setHideOrganizerOnlyEvents(true)
     }
-  }, [])
+  }, [searchParams])
 
   useEffect(() => {
     loadTeams()
@@ -95,9 +122,13 @@ export default function CalendarPage() {
     // Only load calendar data if teams have been loaded (even if empty)
     // This prevents loading before teams are fetched
     if (teamsLoaded) {
-      loadCalendarData()
+      if (eventViewType === 'personal') {
+        loadPersonalActivitiesGrouped()
+      } else {
+        loadCalendarData()
+      }
     }
-  }, [currentDate, viewMode, numWeeks, teams, selectedTeamIds, selectedEventTypes, teamsLoaded, showPersonalActivities, hideOrganizerOnlyEvents])
+  }, [currentDate, viewMode, numWeeks, teams, selectedTeamIds, selectedEventTypes, teamsLoaded, showPersonalActivities, hideOrganizerOnlyEvents, eventViewType])
 
   async function loadTeams() {
     const supabase = createClient()
@@ -183,8 +214,11 @@ export default function CalendarPage() {
 
     const items: CalendarItem[] = []
 
-    // Load matches if enabled
-    if (selectedEventTypes.includes('match')) {
+    // Only load team events (matches and team events) if view is 'all' or 'team'
+    const shouldLoadTeamEvents = eventViewType === 'all' || eventViewType === 'team'
+
+    // Load matches if enabled and view allows team events
+    if (shouldLoadTeamEvents && selectedEventTypes.includes('match')) {
       let query = supabase
         .from('matches')
         .select('*, teams!inner(id, name, color)')
@@ -217,9 +251,9 @@ export default function CalendarPage() {
       }
     }
 
-    // Load events if enabled (check if any event types are selected)
+    // Load events if enabled (check if any event types are selected) and view allows team events
     const eventTypesToLoad = selectedEventTypes.filter(t => t !== 'match')
-    if (eventTypesToLoad.length > 0) {
+    if (shouldLoadTeamEvents && eventTypesToLoad.length > 0) {
       let query = supabase
         .from('events')
         .select('*, teams!inner(id, name, color)')
@@ -267,8 +301,9 @@ export default function CalendarPage() {
       }
     }
 
-    // Load personal activities if enabled
-    if (showPersonalActivities) {
+    // Load personal activities if enabled and view allows personal activities
+    const shouldLoadPersonalActivities = (eventViewType === 'all' || eventViewType === 'personal') && showPersonalActivities
+    if (shouldLoadPersonalActivities) {
       // Load activities user created
       const { data: createdActivities } = await supabase
         .from('personal_events')
@@ -566,6 +601,222 @@ export default function CalendarPage() {
 
     setCalendarItems(filteredItems)
     setLoading(false)
+  }
+
+  async function loadPersonalActivitiesGrouped() {
+    try {
+      setLoading(true)
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+
+      if (!user) {
+        setLoading(false)
+        return
+      }
+
+      const effectiveUserId = getEffectiveUserId(user.id)
+      const userProfile = await supabase.from('profiles').select('id, email, full_name').eq('id', effectiveUserId).single()
+      const effectiveUserEmail = getEffectiveUserEmail(userProfile.data?.email || null)
+
+      // For month/week views, we need to load calendar items with date filtering
+      if (viewMode === 'month' || viewMode === 'week') {
+        const dateRange = viewMode === 'month' 
+          ? getDateRangeForMonth(currentDate)
+          : getDateRangeForWeek(currentDate, numWeeks)
+
+        // Load personal activities user created within date range
+        const { data: createdEvents } = await supabase
+          .from('personal_events')
+          .select('*')
+          .eq('creator_id', effectiveUserId)
+          .gte('date', dateRange.start)
+          .lte('date', dateRange.end)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+
+        // Load personal activities user is invited to
+        const { data: invitations } = await supabase
+          .from('event_invitations')
+          .select('*, personal_events(*)')
+          .or(`invitee_id.eq.${effectiveUserId},invitee_email.eq.${effectiveUserEmail || ''}`)
+          .in('status', ['pending', 'accepted'])
+
+        // Load personal activities where user is an attendee
+        const { data: attendeeEvents } = await supabase
+          .from('event_attendees')
+          .select('*, personal_events(*)')
+          .or(`user_id.eq.${effectiveUserId},email.eq.${effectiveUserEmail || ''}`)
+
+        const items: CalendarItem[] = []
+        const seenIds = new Set<string>()
+
+        // Add created events
+        if (createdEvents) {
+          for (const event of createdEvents) {
+            if (!seenIds.has(event.id)) {
+              items.push({
+                id: event.id,
+                type: 'personal_activity',
+                date: event.date,
+                time: event.time,
+                duration: event.duration || null,
+                teamId: event.team_id || undefined,
+                name: event.title,
+                activityType: event.activity_type,
+                creatorId: event.creator_id,
+              })
+              seenIds.add(event.id)
+            }
+          }
+        }
+
+        // Add invited events (filter by date range)
+        if (invitations) {
+          for (const inv of invitations) {
+            const event = inv.personal_events
+            if (event && !seenIds.has(event.id) && event.date >= dateRange.start && event.date <= dateRange.end) {
+              items.push({
+                id: event.id,
+                type: 'personal_activity',
+                date: event.date,
+                time: event.time,
+                duration: event.duration || null,
+                teamId: event.team_id || undefined,
+                name: event.title,
+                activityType: event.activity_type,
+                creatorId: event.creator_id,
+              })
+              seenIds.add(event.id)
+            }
+          }
+        }
+
+        // Add attendee events (filter by date range)
+        if (attendeeEvents) {
+          for (const att of attendeeEvents) {
+            const event = att.personal_events
+            if (event && !seenIds.has(event.id) && event.date >= dateRange.start && event.date <= dateRange.end) {
+              items.push({
+                id: event.id,
+                type: 'personal_activity',
+                date: event.date,
+                time: event.time,
+                duration: event.duration || null,
+                teamId: event.team_id || undefined,
+                name: event.title,
+                activityType: event.activity_type,
+                creatorId: event.creator_id,
+              })
+              seenIds.add(event.id)
+            }
+          }
+        }
+
+        // Load user's attendee status for personal activities
+        const personalActivityIds = items.map(i => i.id)
+        if (personalActivityIds.length > 0) {
+          const { data: attendeeStatus } = await supabase
+            .from('event_attendees')
+            .select('personal_event_id, availability_status')
+            .in('personal_event_id', personalActivityIds)
+            .or(`user_id.eq.${effectiveUserId},email.eq.${effectiveUserEmail || ''}`)
+
+          attendeeStatus?.forEach((att: any) => {
+            const item = items.find(i => i.id === att.personal_event_id && i.type === 'personal_activity')
+            if (item) {
+              item.availability = { status: att.availability_status }
+            }
+          })
+        }
+
+        // Sort by date and time
+        items.sort((a, b) => {
+          if (a.date !== b.date) {
+            return a.date.localeCompare(b.date)
+          }
+          return (a.time || '').localeCompare(b.time || '')
+        })
+
+        setCalendarItems(items)
+        // Clear grouped activities when in month/week view
+        setCreatedActivities([])
+        setInvitedActivities([])
+      }
+
+      // For list view, load all activities grouped
+      if (viewMode === 'list') {
+        // Clear calendar items when in list view
+        setCalendarItems([])
+        // Load activities user created
+        const { data: created } = await supabase
+          .from('personal_events')
+          .select('*')
+          .eq('creator_id', effectiveUserId)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+
+        // Load activities user is invited to
+        const { data: invitations } = await supabase
+          .from('event_invitations')
+          .select('*, personal_events(*)')
+          .or(`invitee_id.eq.${effectiveUserId},invitee_email.eq.${effectiveUserEmail || ''}`)
+          .in('status', ['pending', 'accepted'])
+
+        // Also load activities where user is an attendee
+        const { data: attendeeActivities } = await supabase
+          .from('event_attendees')
+          .select('*, personal_events(*)')
+          .or(`user_id.eq.${effectiveUserId},email.eq.${effectiveUserEmail || ''}`)
+
+        // Process created activities
+        if (created && created.length > 0) {
+          const activityIds = created.map((a: any) => a.id)
+          const { data: attendees } = await supabase
+            .from('event_attendees')
+            .select('id, personal_event_id, name, email, user_id, availability_status, profiles(id, full_name)')
+            .in('personal_event_id', activityIds)
+            .order('created_at', { ascending: true })
+
+          const attendeesByActivity: Record<string, Array<any>> = {}
+          attendees?.forEach((att: any) => {
+            const eventId = att.personal_event_id
+            if (!attendeesByActivity[eventId]) {
+              attendeesByActivity[eventId] = []
+            }
+            attendeesByActivity[eventId].push(att)
+          })
+
+          const createdWithDetails = created.map((activity: any) => ({
+            ...activity,
+            isCreator: true,
+            attendees: attendeesByActivity[activity.id] || [],
+          }))
+          setCreatedActivities(createdWithDetails)
+        } else {
+          setCreatedActivities([])
+        }
+
+        // Process invited activities
+        if (invitations && invitations.length > 0) {
+          const invitedWithDetails = invitations
+            .map((inv: any) => inv.personal_events)
+            .filter(Boolean)
+            .map((activity: any) => ({
+              ...activity,
+              invitation: invitations.find((inv: any) => inv.personal_events?.id === activity.id),
+              isCreator: false,
+              attendees: [],
+            }))
+          setInvitedActivities(invitedWithDetails)
+        } else {
+          setInvitedActivities([])
+        }
+      }
+    } catch (error) {
+      console.error('Error loading personal activities:', error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   function handlePrevious() {
@@ -905,6 +1156,42 @@ export default function CalendarPage() {
           )}
         </div>
 
+        {/* View Selector */}
+        <Card>
+          <CardContent className="p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-muted-foreground">View:</span>
+              <Select 
+                value={eventViewType} 
+                onValueChange={(value) => {
+                  const newView = value as EventViewType
+                  setEventViewType(newView)
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('calendar-event-view-type', newView)
+                    // Update URL without page reload
+                    const url = new URL(window.location.href)
+                    if (newView === 'all') {
+                      url.searchParams.delete('view')
+                    } else {
+                      url.searchParams.set('view', newView)
+                    }
+                    router.replace(url.pathname + url.search)
+                  }
+                }}
+              >
+                <SelectTrigger className="w-[180px] h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Events</SelectItem>
+                  <SelectItem value="team">Team Events Only</SelectItem>
+                  <SelectItem value="personal">Personal Activities Only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Date Navigation */}
         <Card>
           <CardContent className="p-2">
@@ -918,8 +1205,18 @@ export default function CalendarPage() {
                 Today
               </Button>
 
-              {canAddEvents && (
-                <>
+              <div className="flex gap-2">
+                {(eventViewType === 'all' || eventViewType === 'personal') && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowCreateActivityDialog(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Create Activity
+                  </Button>
+                )}
+                {canAddEvents && (
                   <Button
                     size="sm"
                     onClick={handleAddEvent}
@@ -927,9 +1224,23 @@ export default function CalendarPage() {
                     <Plus className="h-4 w-4 mr-1" />
                     Add Event
                   </Button>
-                  <span className="text-xs text-muted-foreground">Practice, scrimmage, social</span>
-                </>
-              )}
+                )}
+              </div>
+
+              <Tabs value={viewMode} onValueChange={(v) => {
+                const newMode = v as ViewMode
+                setViewMode(newMode)
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('calendar-view-mode', newMode)
+                }
+              }} className="flex-1">
+                <TabsList className="inline-flex gap-0 w-auto p-0.5 h-8">
+                  <TabsTrigger value="week" className="px-2 text-xs h-7 w-auto data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold">Week</TabsTrigger>
+                  <TabsTrigger value="month" className="px-2 text-xs h-7 w-auto data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold">Month</TabsTrigger>
+                  <TabsTrigger value="list" className="px-2 text-xs h-7 w-auto data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold">List</TabsTrigger>
+                </TabsList>
+              </Tabs>
+
               <Button
                 variant={bulkSelectMode ? "default" : "outline"}
                 size="sm"
@@ -952,20 +1263,6 @@ export default function CalendarPage() {
                   </>
                 )}
               </Button>
-
-              <Tabs value={viewMode} onValueChange={(v) => {
-                const newMode = v as ViewMode
-                setViewMode(newMode)
-                if (typeof window !== 'undefined') {
-                  localStorage.setItem('calendar-view-mode', newMode)
-                }
-              }} className="flex-1">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="week">Week</TabsTrigger>
-                  <TabsTrigger value="month">Month</TabsTrigger>
-                  <TabsTrigger value="list">List</TabsTrigger>
-                </TabsList>
-              </Tabs>
             </div>
             
             {/* Weeks filter - only shown in week view, right under Week tab */}
@@ -994,8 +1291,8 @@ export default function CalendarPage() {
           </CardContent>
         </Card>
 
-        {/* Team Filter Chips - Quick Access */}
-        {teams.length > 1 && (
+        {/* Team Filter Chips - Quick Access - Only show when not in personal view */}
+        {eventViewType !== 'personal' && teams.length > 1 && (
           <Card>
             <CardContent className="p-2">
               <div className="flex items-center gap-2 flex-wrap">
@@ -1066,7 +1363,8 @@ export default function CalendarPage() {
           </Card>
         )}
 
-        {/* Event Type Filter */}
+        {/* Event Type Filter - Only show when not in personal view */}
+        {eventViewType !== 'personal' && (
         <Card>
           <CardContent className="p-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -1116,8 +1414,10 @@ export default function CalendarPage() {
             </div>
           </CardContent>
         </Card>
+        )}
 
-        {/* Personal Activities Filter */}
+        {/* Personal Activities Filter - Only show when not in personal view */}
+        {eventViewType !== 'personal' && (
         <Card>
           <CardContent className="p-2 space-y-2">
             <div className="flex items-center gap-2">
@@ -1152,9 +1452,10 @@ export default function CalendarPage() {
             )}
           </CardContent>
         </Card>
+        )}
 
-        {/* Quick Update Panel - shown when items are selected in bulk mode */}
-        {bulkSelectMode && selectedItems.size > 0 && (
+        {/* Quick Update Panel - shown when items are selected in bulk mode - Only show when not in personal view */}
+        {eventViewType !== 'personal' && bulkSelectMode && selectedItems.size > 0 && (
           <Card className="sticky top-0 z-10 bg-background border-primary">
             <CardContent className="p-3">
               <div className="flex items-center justify-between gap-3">
@@ -1178,7 +1479,7 @@ export default function CalendarPage() {
                       <SelectItem value="maybe">
                         <div className="flex items-center gap-2">
                           <HelpCircle className="h-4 w-4 text-yellow-500" />
-                          <span>Maybe</span>
+                          <span>Unsure</span>
                         </div>
                       </SelectItem>
                       <SelectItem value="unavailable">
@@ -1212,97 +1513,314 @@ export default function CalendarPage() {
           </Card>
         )}
 
-        {/* Calendar View */}
-        {loading ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-              <p className="text-sm text-muted-foreground mt-4">Loading calendar...</p>
-            </CardContent>
-          </Card>
-        ) : viewMode === 'week' ? (
-          <WeekView 
-            currentDate={currentDate} 
-            items={calendarItems} 
-            numWeeks={numWeeks}
-            onPrevious={handlePrevious}
-            onNext={handleNext}
-          />
-        ) : viewMode === 'month' ? (
-          <MonthView 
-            currentDate={currentDate} 
-            items={calendarItems}
-            onPrevious={handlePrevious}
-            onNext={handleNext}
-          />
-        ) : (
-          <div className="space-y-2">
-            {calendarItems.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <p className="text-muted-foreground">No events scheduled</p>
-                </CardContent>
-              </Card>
-            ) : (
-              calendarItems.map((item) => {
-                const rosterMemberId = teams.find(t => t.id === item.teamId)?.rosterMemberId
+        {/* Personal Activities View - Show grouped list only when viewMode is 'list', otherwise show calendar views */}
+        {eventViewType === 'personal' && viewMode === 'list' ? (
+          loading ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+                <p className="text-sm text-muted-foreground mt-4">Loading activities...</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {/* Header with Create Button */}
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold">My Activities</h2>
+                <Button size="sm" onClick={() => setShowCreateActivityDialog(true)}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Create Activity
+                </Button>
+              </div>
+
+              {/* Filters */}
+              <div className="flex gap-2">
+                <Select value={activityFilterType} onValueChange={setActivityFilterType}>
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="scrimmage">Scrimmage</SelectItem>
+                    <SelectItem value="lesson">Lesson</SelectItem>
+                    <SelectItem value="class">Class</SelectItem>
+                    <SelectItem value="flex_league">Flex League</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={activityFilterStatus} onValueChange={setActivityFilterStatus}>
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="upcoming">Upcoming</SelectItem>
+                    <SelectItem value="past">Past</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Filter activities */}
+              {(() => {
+                const today = new Date().toISOString().split('T')[0]
+                const filteredCreated = createdActivities.filter((activity: any) => {
+                  if (activityFilterType !== 'all' && activity.activity_type !== activityFilterType) return false
+                  if (activityFilterStatus === 'upcoming') {
+                    return activity.date >= today
+                  } else {
+                    return activity.date < today
+                  }
+                })
+
+                const filteredInvited = invitedActivities.filter((activity: any) => {
+                  if (activityFilterType !== 'all' && activity.activity_type !== activityFilterType) return false
+                  if (activityFilterStatus === 'upcoming') {
+                    return activity.date >= today
+                  } else {
+                    return activity.date < today
+                  }
+                })
+
                 return (
-                  <Card key={item.id} className="p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0" onClick={() => {
-                        if (item.type === 'match') {
-                          router.push(`/teams/${item.teamId}/matches/${item.id}`)
-                        } else {
-                          router.push(`/teams/${item.teamId}/events/${item.id}`)
-                        }
-                      }} style={{ cursor: 'pointer' }}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium text-muted-foreground">
-                            {formatDate(item.date, 'EEE M/d')}
-                          </span>
+                  <>
+                    {/* Created Activities */}
+                    {filteredCreated.length > 0 && (
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                          Activities I Created ({filteredCreated.length})
+                        </h3>
+                        <div className="space-y-2">
+                          {filteredCreated.map((activity: any) => (
+                            <Link key={activity.id} href={`/activities/${activity.id}`}>
+                              <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+                                <CardContent className="p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <ActivityTypeBadge activityType={activity.activity_type} />
+                                        <span className="font-medium">{activity.title}</span>
+                                      </div>
+                                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                        <div className="flex items-center gap-1">
+                                          <Calendar className="h-3 w-3" />
+                                          {formatDate(activity.date, 'MMM d, yyyy')}
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <Clock className="h-3 w-3" />
+                                          {formatTime(activity.time)}
+                                        </div>
+                                        {activity.location && (
+                                          <span className="truncate">{activity.location}</span>
+                                        )}
+                                      </div>
+                                      {activity.attendees && activity.attendees.length > 0 && (
+                                        <div className="mt-1 text-xs text-muted-foreground">
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <Users className="h-3 w-3" />
+                                            <span>{activity.attendees.length} attendee{activity.attendees.length !== 1 ? 's' : ''}</span>
+                                          </div>
+                                          <div className="flex flex-wrap gap-1.5 mt-1">
+                                            {activity.attendees.slice(0, 5).map((attendee: any) => (
+                                              <span key={attendee.id} className="text-xs">
+                                                {attendee.name || (attendee.profiles?.full_name) || attendee.email?.split('@')[0]}
+                                                {activity.attendees!.length > 5 && activity.attendees!.indexOf(attendee) === 4 && (
+                                                  <span className="text-muted-foreground"> +{activity.attendees!.length - 5} more</span>
+                                                )}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                    <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </Link>
+                          ))}
                         </div>
-                        <CalendarItemTile item={item} compact={false} />
                       </div>
-                      {rosterMemberId && (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant={item.availabilityStatus === 'available' ? 'default' : 'outline'}
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={async () => {
-                              await updateAvailability(item, rosterMemberId, 'available')
-                            }}
-                          >
-                            <Check className="h-4 w-4 text-green-600" />
-                          </Button>
-                          <Button
-                            variant={item.availabilityStatus === 'maybe' ? 'default' : 'outline'}
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={async () => {
-                              await updateAvailability(item, rosterMemberId, 'maybe')
-                            }}
-                          >
-                            <HelpCircle className="h-4 w-4 text-yellow-600" />
-                          </Button>
-                          <Button
-                            variant={item.availabilityStatus === 'unavailable' ? 'default' : 'outline'}
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={async () => {
-                              await updateAvailability(item, rosterMemberId, 'unavailable')
-                            }}
-                          >
-                            <X className="h-4 w-4 text-red-600" />
-                          </Button>
+                    )}
+
+                    {/* Invited Activities */}
+                    {filteredInvited.length > 0 && (
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                          Activities I'm Invited To ({filteredInvited.length})
+                        </h3>
+                        <div className="space-y-2">
+                          {filteredInvited.map((activity: any) => (
+                            <Link key={activity.id} href={`/activities/${activity.id}`}>
+                              <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+                                <CardContent className="p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <ActivityTypeBadge activityType={activity.activity_type} />
+                                        <span className="font-medium">{activity.title}</span>
+                                        {activity.invitation?.status === 'pending' && (
+                                          <Badge variant="outline" className="text-xs">Pending</Badge>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                        <div className="flex items-center gap-1">
+                                          <Calendar className="h-3 w-3" />
+                                          {formatDate(activity.date, 'MMM d, yyyy')}
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <Clock className="h-3 w-3" />
+                                          {formatTime(activity.time)}
+                                        </div>
+                                        {activity.location && (
+                                          <span className="truncate">{activity.location}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </Link>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                  </Card>
+                      </div>
+                    )}
+
+                    {filteredCreated.length === 0 && filteredInvited.length === 0 && (
+                      <Card>
+                        <CardContent className="py-12 text-center">
+                          <p className="text-muted-foreground">No activities found</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </>
                 )
-              })
-            )}
-          </div>
+              })()}
+            </div>
+          )
+        ) : eventViewType === 'personal' ? (
+          // For month/week views with personal activities, show calendar views
+          loading ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+                <p className="text-sm text-muted-foreground mt-4">Loading activities...</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {viewMode === 'week' && (
+                <WeekView 
+                  currentDate={currentDate} 
+                  items={calendarItems} 
+                  numWeeks={numWeeks}
+                  onPrevious={handlePrevious}
+                  onNext={handleNext}
+                />
+              )}
+              {viewMode === 'month' && (
+                <MonthView 
+                  currentDate={currentDate} 
+                  items={calendarItems}
+                  onPrevious={handlePrevious}
+                  onNext={handleNext}
+                />
+              )}
+            </>
+          )
+        ) : (
+          /* Calendar View */
+          (loading ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+                <p className="text-sm text-muted-foreground mt-4">Loading calendar...</p>
+              </CardContent>
+            </Card>
+          ) : viewMode === 'week' ? (
+            <WeekView 
+              currentDate={currentDate} 
+              items={calendarItems} 
+              numWeeks={numWeeks}
+              onPrevious={handlePrevious}
+              onNext={handleNext}
+            />
+          ) : viewMode === 'month' ? (
+            <MonthView 
+              currentDate={currentDate} 
+              items={calendarItems}
+              onPrevious={handlePrevious}
+              onNext={handleNext}
+            />
+          ) : (
+            <div className="space-y-2">
+              {calendarItems.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <p className="text-muted-foreground">No events scheduled</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                calendarItems.map((item) => {
+                  const rosterMemberId = teams.find(t => t.id === item.teamId)?.rosterMemberId
+                  return (
+                    <Card key={item.id} className="p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0" onClick={() => {
+                          if (item.type === 'match') {
+                            router.push(`/teams/${item.teamId}/matches/${item.id}`)
+                          } else {
+                            router.push(`/teams/${item.teamId}/events/${item.id}`)
+                          }
+                        }} style={{ cursor: 'pointer' }}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-medium text-muted-foreground">
+                              {formatDate(item.date, 'EEE M/d')}
+                            </span>
+                          </div>
+                          <CalendarItemTile item={item} compact={false} />
+                        </div>
+                        {rosterMemberId && (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant={item.availabilityStatus === 'available' ? 'default' : 'outline'}
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={async () => {
+                                await updateAvailability(item, rosterMemberId, 'available')
+                              }}
+                            >
+                              <Check className="h-4 w-4 text-green-600" />
+                            </Button>
+                            <Button
+                              variant={item.availabilityStatus === 'maybe' ? 'default' : 'outline'}
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={async () => {
+                                await updateAvailability(item, rosterMemberId, 'maybe')
+                              }}
+                            >
+                              <HelpCircle className="h-4 w-4 text-yellow-600" />
+                            </Button>
+                            <Button
+                              variant={item.availabilityStatus === 'unavailable' ? 'default' : 'outline'}
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={async () => {
+                                await updateAvailability(item, rosterMemberId, 'unavailable')
+                              }}
+                            >
+                              <X className="h-4 w-4 text-red-600" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  )
+                })
+              )}
+            </div>
+          ))
         )}
       </main>
 
@@ -1324,7 +1842,38 @@ export default function CalendarPage() {
           }}
         />
       )}
+
+      {showCreateActivityDialog && (
+        <AddPersonalEventDialog
+          open={showCreateActivityDialog}
+          onOpenChange={(open) => {
+            if (!open) {
+              setShowCreateActivityDialog(false)
+            }
+          }}
+          onAdded={() => {
+            setShowCreateActivityDialog(false)
+            if (eventViewType === 'personal') {
+              loadPersonalActivitiesGrouped()
+            } else {
+              loadCalendarData()
+            }
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+export default function CalendarPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <CalendarPageContent />
+    </Suspense>
   )
 }
 

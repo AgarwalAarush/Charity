@@ -37,6 +37,25 @@ export async function POST(request: NextRequest) {
     if (!team) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 })
     }
+    
+    // Load and format line_match_types
+    const matchTypeMap: Record<string, string> = {
+      'doubles': 'Doubles Match',
+      'singles': 'Singles Match',
+      'mixed': 'Mixed Doubles',
+    }
+    let lineMatchTypes: string[] = []
+    if (team.line_match_types && Array.isArray(team.line_match_types)) {
+      lineMatchTypes = team.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+      const lines = team.total_lines || 3
+      while (lineMatchTypes.length < lines) {
+        lineMatchTypes.push('Doubles Match')
+      }
+      lineMatchTypes = lineMatchTypes.slice(0, lines)
+    } else {
+      const lines = team.total_lines || 3
+      lineMatchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+    }
 
     // Get published lineups with player details
     const { data: lineups } = await supabase
@@ -79,7 +98,7 @@ export async function POST(request: NextRequest) {
       })
     })
 
-    const lineupSummary = EmailService.generateLineupSummary(lineupDetails)
+    const lineupSummary = EmailService.generateLineupSummary(lineupDetails, lineMatchTypes)
     const emailResults: Array<{ email: string; success: boolean; error?: string }> = []
 
     // Send emails to players in lineup

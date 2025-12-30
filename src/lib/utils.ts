@@ -274,15 +274,63 @@ export function parseCSVPlayers(csvText: string): Array<{
   return results
 }
 
+/**
+ * Formats a court number based on whether it's singles or doubles
+ * Singles courts: S1, S2, etc.
+ * Doubles courts: D1, D2, D3, etc.
+ */
+export function formatCourtLabel(
+  courtSlot: number,
+  matchType?: string | null,
+  lineMatchTypes?: string[]
+): string {
+  // If lineMatchTypes array is provided, use it to determine the match type for this court
+  if (lineMatchTypes && lineMatchTypes.length >= courtSlot) {
+    const courtMatchType = lineMatchTypes[courtSlot - 1]
+    if (courtMatchType === 'singles' || courtMatchType === 'Singles Match') {
+      // Count how many singles courts come before this one
+      let singlesCount = 0
+      for (let i = 0; i < courtSlot - 1; i++) {
+        if (lineMatchTypes[i] === 'singles' || lineMatchTypes[i] === 'Singles Match') {
+          singlesCount++
+        }
+      }
+      return `S${singlesCount + 1}`
+    } else {
+      // Count how many doubles courts come before this one
+      let doublesCount = 0
+      for (let i = 0; i < courtSlot - 1; i++) {
+        if (lineMatchTypes[i] !== 'singles' && lineMatchTypes[i] !== 'Singles Match') {
+          doublesCount++
+        }
+      }
+      return `D${doublesCount + 1}`
+    }
+  }
+  
+  // Fallback: use matchType parameter if provided
+  if (matchType === 'singles' || matchType === 'Singles Match') {
+    return `S${courtSlot}`
+  }
+  
+  // Default to doubles
+  return `D${courtSlot}`
+}
+
 export function generateLineupSummary(
   lineups: Array<{
     court_slot: number
     player1_name: string
     player2_name: string
-  }>
+    match_type?: string
+  }>,
+  lineMatchTypes?: string[]
 ): string {
   return lineups
     .sort((a, b) => a.court_slot - b.court_slot)
-    .map(l => `Court ${l.court_slot}: ${l.player1_name} & ${l.player2_name}`)
+    .map(l => {
+      const courtLabel = formatCourtLabel(l.court_slot, l.match_type, lineMatchTypes)
+      return `${courtLabel}: ${l.player1_name} & ${l.player2_name}`
+    })
     .join('\n')
 }

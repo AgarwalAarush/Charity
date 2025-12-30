@@ -6,7 +6,7 @@ import { Header } from '@/components/layout/header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { formatDate, formatTime, cn } from '@/lib/utils'
+import { formatDate, formatTime, cn, formatCourtLabel } from '@/lib/utils'
 import { calculateMatchAvailability } from '@/lib/availability-utils'
 import { getEffectiveUserId, getEffectiveUserEmail } from '@/lib/impersonation'
 import {
@@ -26,6 +26,7 @@ import {
   MinusCircle,
   Trophy,
   ChevronRight,
+  ChevronDown,
   Check,
   X,
   HelpCircle,
@@ -67,6 +68,21 @@ interface UpcomingEvent {
   team_name: string
   availability?: {
     status: string
+  }
+  availabilitySummary?: {
+    available: number
+    unavailable: number
+    unsure: number
+    lastResort: number
+    notSet: number
+    total: number
+  }
+  availabilityDetails?: {
+    available: Array<{ id: string; name: string }>
+    unavailable: Array<{ id: string; name: string }>
+    unsure: Array<{ id: string; name: string }>
+    lastResort: Array<{ id: string; name: string }>
+    notSet: Array<{ id: string; name: string }>
   }
 }
 
@@ -128,6 +144,14 @@ export default function HomePage() {
     losses: number
     winPercentage: number
   } | null>(null)
+  const [teamMatchTypes, setTeamMatchTypes] = useState<Record<string, string[]>>({})
+  const [expandedEventAvailability, setExpandedEventAvailability] = useState<Record<string, {
+    available: boolean
+    unavailable: boolean
+    unsure: boolean
+    lastResort: boolean
+    notSet: boolean
+  }>>({})
   const { toast } = useToast()
 
   useEffect(() => {
@@ -219,6 +243,9 @@ export default function HomePage() {
       .select('id, name, league_format, season')
       .or(`captain_id.eq.${effectiveUserId},co_captain_id.eq.${effectiveUserId}`)
 
+    // Create a set of team IDs where user is captain (for lineup filtering)
+    const captainTeamIds = new Set(captainTeams?.map(t => t.id) || [])
+
     // Combine and deduplicate teams
     const membershipTeams: Team[] = []
     memberships?.forEach(m => {
@@ -302,7 +329,40 @@ export default function HomePage() {
     // Get lineups and availability for these matches
     const matchIds = matches.map(m => m.id)
 
-    const { data: lineups } = await supabase
+    // Load team configurations to determine which courts are singles
+    const { data: teamsData } = await supabase
+      .from('teams')
+      .select('id, total_lines, line_match_types')
+      .in('id', teamIds)
+
+    // Build a map of team_id -> court match types
+    const teamMatchTypes: Record<string, string[]> = {}
+    teamsData?.forEach(team => {
+      const matchTypeMap: Record<string, string> = {
+        'doubles': 'Doubles Match',
+        'singles': 'Singles Match',
+        'mixed': 'Mixed Doubles',
+      }
+      let matchTypes: string[] = []
+      if (team.line_match_types && Array.isArray(team.line_match_types)) {
+        matchTypes = team.line_match_types.map((type: string) => matchTypeMap[type] || 'Doubles Match')
+        const lines = team.total_lines || 3
+        while (matchTypes.length < lines) {
+          matchTypes.push('Doubles Match')
+        }
+        matchTypes = matchTypes.slice(0, lines)
+      } else {
+        const lines = team.total_lines || 3
+        matchTypes = Array.from({ length: lines }, () => 'Doubles Match')
+      }
+      teamMatchTypes[team.id] = matchTypes
+    })
+    
+    setTeamMatchTypes(teamMatchTypes)
+
+    // Use the captainTeamIds set we already created above (captain status is constant per season)
+    // Load lineups - captains see all, players only see published
+    let lineupsQuery = supabase
       .from('lineups')
       .select(`
         id,
@@ -311,6 +371,7 @@ export default function HomePage() {
         player1_id,
         player2_id,
         is_published,
+        matches!inner(team_id),
         player1:roster_members!lineups_player1_id_fkey (
           id,
           full_name
@@ -321,8 +382,21 @@ export default function HomePage() {
         )
       `)
       .in('match_id', matchIds)
-      .eq('is_published', true)
-      .order('court_slot', { ascending: true })
+    
+    // If user is not a captain for any team, filter to only published lineups
+    if (captainTeamIds.size === 0) {
+      lineupsQuery = lineupsQuery.eq('is_published', true)
+    }
+    
+    const { data: lineups } = await lineupsQuery.order('court_slot', { ascending: true })
+    
+    // Filter lineups: captains see all, players only see published
+    const filteredLineups = lineups?.filter(lineup => {
+      const match = Array.isArray(lineup.matches) ? lineup.matches[0] : lineup.matches
+      const lineupTeamId = match?.team_id
+      // If user is captain for this team, show all lineups; otherwise only published
+      return captainTeamIds.has(lineupTeamId) || lineup.is_published
+    }) || []
 
     // Group lineups by match_id
     const lineupsByMatch: Record<string, Array<{
@@ -332,19 +406,36 @@ export default function HomePage() {
       player2: { id: string; full_name: string } | null
     }>> = {}
     
-    if (lineups) {
-      lineups.forEach((lineup: any) => {
+    if (filteredLineups) {
+      filteredLineups.forEach((lineup: any) => {
         if (!lineupsByMatch[lineup.match_id]) {
           lineupsByMatch[lineup.match_id] = []
         }
         const player1 = Array.isArray(lineup.player1) ? lineup.player1[0] : lineup.player1
         const player2 = Array.isArray(lineup.player2) ? lineup.player2[0] : lineup.player2
+        
+        // Get team_id from the match
+        const match = Array.isArray(lineup.matches) ? lineup.matches[0] : lineup.matches
+        const teamId = match?.team_id
+        
+        // Check if this court is singles
+        const matchTypes = teamId ? teamMatchTypes[teamId] : []
+        const courtIndex = lineup.court_slot - 1
+        const matchType = matchTypes[courtIndex] || 'Doubles Match'
+        const isSingles = matchType === 'Singles Match'
+        
+        // For singles courts, don't show player2
         lineupsByMatch[lineup.match_id].push({
           id: lineup.id,
           court_slot: lineup.court_slot,
           player1: player1 ? { id: player1.id, full_name: player1.full_name } : null,
-          player2: player2 ? { id: player2.id, full_name: player2.full_name } : null,
+          player2: isSingles ? null : (player2 ? { id: player2.id, full_name: player2.full_name } : null),
         })
+      })
+      
+      // Sort lineups by court_slot to ensure proper ordering
+      Object.keys(lineupsByMatch).forEach(matchId => {
+        lineupsByMatch[matchId].sort((a, b) => a.court_slot - b.court_slot)
       })
     }
     
@@ -464,22 +555,79 @@ export default function HomePage() {
       .order('time', { ascending: true })
       .limit(10)
 
-    // Get availability for events
+    // Get availability for events - load ALL availability for all team members, not just current user
     const eventIds = events?.map(e => e.id) || []
+    
+    // Load all roster members for all teams that have events
+    const teamIdsWithEvents = [...new Set(events?.map(e => e.team_id) || [])]
+    const { data: allTeamRosterMembers } = await supabase
+      .from('roster_members')
+      .select('id, full_name, team_id')
+      .in('team_id', teamIdsWithEvents)
+      .eq('is_active', true)
+    
+    // Load all availability for these events (all roster members)
+    const allRosterMemberIds = allTeamRosterMembers?.map(rm => rm.id) || []
     const { data: eventAvailabilities } = await supabase
       .from('availability')
       .select('*')
       .in('event_id', eventIds)
-      .in('roster_member_id', rosterMemberIds)
+      .in('roster_member_id', allRosterMemberIds)
+
+    // Create roster member map by team
+    const rosterByTeam: Record<string, Array<{ id: string; full_name: string }>> = {}
+    allTeamRosterMembers?.forEach(rm => {
+      if (!rosterByTeam[rm.team_id]) {
+        rosterByTeam[rm.team_id] = []
+      }
+      rosterByTeam[rm.team_id].push({ id: rm.id, full_name: rm.full_name })
+    })
 
     // Process events
     const processedEvents: UpcomingEvent[] = (events || []).map(event => {
       const membership = memberships.find(m => m.team_id === event.team_id)
       const memberRosterId = membership?.id
       
+      // Current user's availability
       const availability = eventAvailabilities?.find(a =>
         a.event_id === event.id && a.roster_member_id === memberRosterId
       )
+
+      // Calculate availability summary for this event
+      const teamRoster = rosterByTeam[event.team_id] || []
+      const teamAvailability = eventAvailabilities?.filter(a => a.event_id === event.id) || []
+      const respondedIds = new Set(teamAvailability.map(a => a.roster_member_id))
+      
+      const availablePlayers: Array<{ id: string; name: string }> = []
+      const unavailablePlayers: Array<{ id: string; name: string }> = []
+      const unsurePlayers: Array<{ id: string; name: string }> = []
+      const lastResortPlayers: Array<{ id: string; name: string }> = []
+      const notSetPlayers: Array<{ id: string; name: string }> = []
+
+      // Process availability responses
+      teamAvailability.forEach(avail => {
+        const rosterMember = teamRoster.find(rm => rm.id === avail.roster_member_id)
+        if (!rosterMember) return
+        
+        const playerInfo = { id: rosterMember.id, name: rosterMember.full_name }
+        
+        if (avail.status === 'available') {
+          availablePlayers.push(playerInfo)
+        } else if (avail.status === 'unavailable') {
+          unavailablePlayers.push(playerInfo)
+        } else if (avail.status === 'maybe') {
+          unsurePlayers.push(playerInfo)
+        } else if (avail.status === 'last_resort') {
+          lastResortPlayers.push(playerInfo)
+        }
+      })
+
+      // Add players without responses as "not set"
+      teamRoster.forEach(rm => {
+        if (!respondedIds.has(rm.id)) {
+          notSetPlayers.push({ id: rm.id, name: rm.full_name })
+        }
+      })
 
       return {
         id: event.id,
@@ -490,7 +638,22 @@ export default function HomePage() {
         location: event.location,
         team_id: event.team_id,
         team_name: (Array.isArray(event.teams) ? event.teams[0] : event.teams)?.name || 'Unknown',
-        availability: availability ? { status: availability.status } : undefined
+        availability: availability ? { status: availability.status } : undefined,
+        availabilitySummary: {
+          available: availablePlayers.length,
+          unavailable: unavailablePlayers.length,
+          unsure: unsurePlayers.length,
+          lastResort: lastResortPlayers.length,
+          notSet: notSetPlayers.length,
+          total: teamRoster.length
+        },
+        availabilityDetails: {
+          available: availablePlayers,
+          unavailable: unavailablePlayers,
+          unsure: unsurePlayers,
+          lastResort: lastResortPlayers,
+          notSet: notSetPlayers
+        }
       }
     })
 
@@ -560,25 +723,11 @@ export default function HomePage() {
         .in('personal_event_id', personalActivityIds)
 
       if (allAttendees) {
-        // Count total attendees per activity (including current user)
-        // Only count attendees who haven't declined (unavailable)
-        const totalAttendeesByActivity: Record<string, number> = {}
-        allAttendees.forEach((att: any) => {
-          // Only count if not declined (unavailable)
-          if (att.availability_status !== 'unavailable') {
-            if (!totalAttendeesByActivity[att.personal_event_id]) {
-              totalAttendeesByActivity[att.personal_event_id] = 0
-            }
-            totalAttendeesByActivity[att.personal_event_id]++
-          }
-        })
-
         // Store all attendees except those who declined (unavailable) and current user
-        // Only for activities with 6 or fewer total attendees
+        // Show all attendees regardless of count
         allAttendees.forEach((att: any) => {
-          const totalCount = totalAttendeesByActivity[att.personal_event_id] || 0
-          // Include if total attendees <= 6 and status is not 'unavailable' (declined)
-          if (totalCount <= 6 && att.availability_status !== 'unavailable') {
+          // Include if status is not 'unavailable' (declined)
+          if (att.availability_status !== 'unavailable') {
             if (!allAttendeesByActivity[att.personal_event_id]) {
               allAttendeesByActivity[att.personal_event_id] = []
             }
@@ -694,12 +843,6 @@ export default function HomePage() {
       return a.time.localeCompare(b.time)
     })
     setAllItems(combined)
-
-    // Load team-specific data if a team is selected
-    if (selectedTeamId || uniqueTeams.length > 0) {
-      const teamToLoad = selectedTeamId || uniqueTeams[0].id
-      await loadTeamData(teamToLoad)
-    }
     
     // Load lifetime statistics
     await loadLifetimeStats()
@@ -713,6 +856,9 @@ export default function HomePage() {
   async function loadTeamData(teamId: string) {
     const supabase = createClient()
     
+    // Reset captain IDs first
+    setTeamCaptainIds(null)
+    
     // Load team to get captain info
     const { data: teamData } = await supabase
       .from('teams')
@@ -725,6 +871,8 @@ export default function HomePage() {
         captain_id: teamData.captain_id,
         co_captain_id: teamData.co_captain_id
       })
+    } else {
+      setTeamCaptainIds(null)
     }
     
     // Load roster
@@ -985,7 +1133,11 @@ export default function HomePage() {
                   {nextMatch.partner_name && (
                     <div className="pt-2 border-t border-green-300">
                       <p className="text-sm">
-                        Court {nextMatch.court_slot} with <span className="font-medium">{nextMatch.partner_name}</span>
+                        {formatCourtLabel(
+                          nextMatch.court_slot || 1,
+                          undefined,
+                          teamMatchTypes[nextMatch.team_id] || []
+                        )} with <span className="font-medium">{nextMatch.partner_name}</span>
                       </p>
                     </div>
                   )}
@@ -1018,9 +1170,14 @@ export default function HomePage() {
                 })()}
                 size="sm"
                 onClick={() => {
-                  // "All" means select all event types
                   const allTypes = ['match', 'practice', 'warmup', 'social', 'other']
-                  setSelectedEventTypes(allTypes)
+                  if (selectedEventTypes.length === allTypes.length) {
+                    // If all selected, deselect all
+                    setSelectedEventTypes([])
+                  } else {
+                    // Otherwise, select all
+                    setSelectedEventTypes(allTypes)
+                  }
                 }}
               >
                 All
@@ -1127,7 +1284,13 @@ export default function HomePage() {
                             <div className="mt-2 pt-2 border-t space-y-1">
                               {matchLineups[match.id].map((lineup) => (
                                 <div key={lineup.id} className="text-xs">
-                                  <span className="font-medium">Court {lineup.court_slot}:</span>
+                                  <span className="font-medium">
+                                    {formatCourtLabel(
+                                      lineup.court_slot,
+                                      undefined,
+                                      teamMatchTypes[match.team_id] || []
+                                    )}:
+                                  </span>
                                   <span className="text-muted-foreground ml-1">
                                     {lineup.player1?.full_name || 'TBD'}
                                     {lineup.player2 && ` & ${lineup.player2.full_name}`}
@@ -1172,7 +1335,7 @@ export default function HomePage() {
                               <SelectItem value="maybe">
                                 <div className="flex items-center gap-2">
                                   <HelpCircle className="h-3 w-3 text-yellow-500" />
-                                  <span>Maybe</span>
+                                  <span>Unsure</span>
                                 </div>
                               </SelectItem>
                               <SelectItem value="unavailable">
@@ -1193,7 +1356,7 @@ export default function HomePage() {
                   const activity = item
                   const personalActivity = upcomingPersonalActivities.find(a => a.id === activity.id)
                   const otherPlayers = personalActivity?.attendees || []
-                  // Show other players if there are any (they're only loaded if total <= 6)
+                  // Show other players if there are any
                   const shouldShowPlayers = otherPlayers.length > 0
                   
                   return (
@@ -1239,7 +1402,7 @@ export default function HomePage() {
                                       <div className="flex items-center gap-1.5">
                                         {getAvailabilityIcon(personalActivity.availability_status)}
                                         <span className="capitalize">
-                                          {personalActivity.availability_status === 'maybe' ? 'Tentative' : personalActivity.availability_status}
+                                          {personalActivity.availability_status === 'maybe' ? 'Unsure' : personalActivity.availability_status}
                                         </span>
                                       </div>
                                     </SelectValue>
@@ -1254,7 +1417,7 @@ export default function HomePage() {
                                     <SelectItem value="maybe">
                                       <div className="flex items-center gap-2">
                                         <HelpCircle className="h-3 w-3 text-yellow-500" />
-                                        <span>Tentative</span>
+                                        <span>Unsure</span>
                                       </div>
                                     </SelectItem>
                                     <SelectItem value="unavailable">
@@ -1274,6 +1437,16 @@ export default function HomePage() {
                   )
                 } else {
                   const event = item as UpcomingEvent
+                  const summary = event.availabilitySummary
+                  const details = event.availabilityDetails
+                  const expanded = expandedEventAvailability[event.id] || {
+                    available: false,
+                    unavailable: false,
+                    unsure: false,
+                    lastResort: false,
+                    notSet: false
+                  }
+                  
                   return (
                     <Link key={event.id} href={`/teams/${event.team_id}/events/${event.id}`}>
                       <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
@@ -1295,6 +1468,180 @@ export default function HomePage() {
                               {event.location && (
                                 <div className="text-xs text-muted-foreground mt-1 truncate">
                                   {event.location}
+                                </div>
+                              )}
+                              {summary && summary.total > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  {summary.available > 0 && (
+                                    <div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setExpandedEventAvailability(prev => ({
+                                            ...prev,
+                                            [event.id]: {
+                                              ...expanded,
+                                              available: !expanded.available
+                                            }
+                                          }))
+                                        }}
+                                        className="flex items-center gap-1.5 text-xs hover:bg-accent/50 rounded px-1 py-0.5 -mx-1 transition-colors w-full text-left"
+                                      >
+                                        <Check className="h-3 w-3 text-green-600" />
+                                        <span className="font-medium">{summary.available}</span>
+                                        <span className="text-muted-foreground">Available</span>
+                                        {details && details.available.length > 0 && (
+                                          <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform ml-auto", expanded.available && "rotate-180")} />
+                                        )}
+                                      </button>
+                                      {expanded.available && details && details.available.length > 0 && (
+                                        <div className="pl-5 pt-0.5 space-y-0.5">
+                                          {details.available.map((player) => (
+                                            <div key={player.id} className="text-xs text-muted-foreground">
+                                              {player.name}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {summary.unsure > 0 && (
+                                    <div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setExpandedEventAvailability(prev => ({
+                                            ...prev,
+                                            [event.id]: {
+                                              ...expanded,
+                                              unsure: !expanded.unsure
+                                            }
+                                          }))
+                                        }}
+                                        className="flex items-center gap-1.5 text-xs hover:bg-accent/50 rounded px-1 py-0.5 -mx-1 transition-colors w-full text-left"
+                                      >
+                                        <HelpCircle className="h-3 w-3 text-yellow-600" />
+                                        <span className="font-medium">{summary.unsure}</span>
+                                        <span className="text-muted-foreground">Unsure</span>
+                                        {details && details.unsure.length > 0 && (
+                                          <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform ml-auto", expanded.unsure && "rotate-180")} />
+                                        )}
+                                      </button>
+                                      {expanded.unsure && details && details.unsure.length > 0 && (
+                                        <div className="pl-5 pt-0.5 space-y-0.5">
+                                          {details.unsure.map((player) => (
+                                            <div key={player.id} className="text-xs text-muted-foreground">
+                                              {player.name}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {summary.lastResort > 0 && (
+                                    <div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setExpandedEventAvailability(prev => ({
+                                            ...prev,
+                                            [event.id]: {
+                                              ...expanded,
+                                              lastResort: !expanded.lastResort
+                                            }
+                                          }))
+                                        }}
+                                        className="flex items-center gap-1.5 text-xs hover:bg-accent/50 rounded px-1 py-0.5 -mx-1 transition-colors w-full text-left"
+                                      >
+                                        <HelpCircle className="h-3 w-3 text-purple-600" />
+                                        <span className="font-medium">{summary.lastResort}</span>
+                                        <span className="text-muted-foreground">Last Resort</span>
+                                        {details && details.lastResort.length > 0 && (
+                                          <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform ml-auto", expanded.lastResort && "rotate-180")} />
+                                        )}
+                                      </button>
+                                      {expanded.lastResort && details && details.lastResort.length > 0 && (
+                                        <div className="pl-5 pt-0.5 space-y-0.5">
+                                          {details.lastResort.map((player) => (
+                                            <div key={player.id} className="text-xs text-muted-foreground">
+                                              {player.name}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {summary.unavailable > 0 && (
+                                    <div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setExpandedEventAvailability(prev => ({
+                                            ...prev,
+                                            [event.id]: {
+                                              ...expanded,
+                                              unavailable: !expanded.unavailable
+                                            }
+                                          }))
+                                        }}
+                                        className="flex items-center gap-1.5 text-xs hover:bg-accent/50 rounded px-1 py-0.5 -mx-1 transition-colors w-full text-left"
+                                      >
+                                        <X className="h-3 w-3 text-red-600" />
+                                        <span className="font-medium">{summary.unavailable}</span>
+                                        <span className="text-muted-foreground">Unavailable</span>
+                                        {details && details.unavailable.length > 0 && (
+                                          <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform ml-auto", expanded.unavailable && "rotate-180")} />
+                                        )}
+                                      </button>
+                                      {expanded.unavailable && details && details.unavailable.length > 0 && (
+                                        <div className="pl-5 pt-0.5 space-y-0.5">
+                                          {details.unavailable.map((player) => (
+                                            <div key={player.id} className="text-xs text-muted-foreground">
+                                              {player.name}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {summary.notSet > 0 && (
+                                    <div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setExpandedEventAvailability(prev => ({
+                                            ...prev,
+                                            [event.id]: {
+                                              ...expanded,
+                                              notSet: !expanded.notSet
+                                            }
+                                          }))
+                                        }}
+                                        className="flex items-center gap-1.5 text-xs hover:bg-accent/50 rounded px-1 py-0.5 -mx-1 transition-colors w-full text-left"
+                                      >
+                                        <Clock className="h-3 w-3 text-gray-600" />
+                                        <span className="font-medium">{summary.notSet}</span>
+                                        <span className="text-muted-foreground">Not Set</span>
+                                        {details && details.notSet.length > 0 && (
+                                          <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform ml-auto", expanded.notSet && "rotate-180")} />
+                                        )}
+                                      </button>
+                                      {expanded.notSet && details && details.notSet.length > 0 && (
+                                        <div className="pl-5 pt-0.5 space-y-0.5">
+                                          {details.notSet.map((player) => (
+                                            <div key={player.id} className="text-xs text-muted-foreground">
+                                              {player.name}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1410,27 +1757,58 @@ export default function HomePage() {
                 <Card>
                   <CardContent className="p-3">
                     <div className="space-y-2">
-                      {teamRoster.map((member) => {
-                        const isCaptain = teamCaptainIds && member.user_id && (
-                          member.user_id === teamCaptainIds.captain_id || 
-                          member.user_id === teamCaptainIds.co_captain_id
-                        )
-                        return (
-                          <div key={member.id} className="flex items-center gap-2 text-sm">
-                            <Avatar className="h-8 w-8">
-                              <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                                {member.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="truncate flex-1">{member.full_name}</span>
-                            {isCaptain && (
-                              <Badge variant="secondary" className="text-xs shrink-0">
-                                Captain
-                              </Badge>
-                            )}
-                          </div>
-                        )
-                      })}
+                      {(() => {
+                        // Sort roster: captains first, then others
+                        const sortedRoster = [...teamRoster].sort((a, b) => {
+                          // Helper function to check if member is captain
+                          const isMemberCaptain = (member: any) => {
+                            const memberUserId = member.user_id ? String(member.user_id).trim() : null
+                            const captainId = teamCaptainIds?.captain_id ? String(teamCaptainIds.captain_id).trim() : null
+                            const coCaptainId = teamCaptainIds?.co_captain_id ? String(teamCaptainIds.co_captain_id).trim() : null
+                            
+                            // Check by user_id only (assumes all captains are app users)
+                            return (memberUserId && captainId && memberUserId === captainId) ||
+                                   (memberUserId && coCaptainId && memberUserId === coCaptainId)
+                          }
+                          
+                          const aIsCaptain = isMemberCaptain(a)
+                          const bIsCaptain = isMemberCaptain(b)
+                          
+                          // Captains come first
+                          if (aIsCaptain && !bIsCaptain) return -1
+                          if (!aIsCaptain && bIsCaptain) return 1
+                          
+                          // Within same group, sort alphabetically
+                          return a.full_name.localeCompare(b.full_name)
+                        })
+                        
+                        return sortedRoster.map((member) => {
+                        // Convert to strings to ensure type consistency in comparison
+                        const memberUserId = member.user_id ? String(member.user_id).trim() : null
+                        const captainId = teamCaptainIds?.captain_id ? String(teamCaptainIds.captain_id).trim() : null
+                        const coCaptainId = teamCaptainIds?.co_captain_id ? String(teamCaptainIds.co_captain_id).trim() : null
+                        
+                        // Check if this member is a captain or co-captain (assumes all captains are app users)
+                        const isCaptain = (memberUserId && captainId && memberUserId === captainId) ||
+                                         (memberUserId && coCaptainId && memberUserId === coCaptainId)
+                          
+                          return (
+                            <div key={member.id} className="flex items-center gap-2 text-sm">
+                              <Avatar className="h-8 w-8">
+                                <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                                  {member.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="truncate flex-1">{member.full_name}</span>
+                              {isCaptain && (
+                                <Badge variant="secondary" className="text-xs shrink-0">
+                                  Captain
+                                </Badge>
+                              )}
+                            </div>
+                          )
+                        })
+                      })()}
                     </div>
                   </CardContent>
                 </Card>

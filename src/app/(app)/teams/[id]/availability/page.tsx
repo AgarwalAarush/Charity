@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, use } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { Button } from '@/components/ui/button'
@@ -12,8 +12,9 @@ import { RosterMember, Match, Availability } from '@/types/database.types'
 import { formatDate, formatTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
-import { Check, X, HelpCircle, Clock, ChevronDown, ArrowLeft, Save, Filter, Users, Trash2, X as XIcon, Eraser } from 'lucide-react'
+import { Check, X, HelpCircle, Clock, ChevronDown, ArrowLeft, Save, Filter, Users, Trash2, X as XIcon, Eraser, CheckCircle2 } from 'lucide-react'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
@@ -40,6 +41,7 @@ import { getEventTypeLabel, getEventTypes, getEventTypeBadgeClass } from '@/lib/
 import { EventTypeBadge } from '@/components/events/event-type-badge'
 import { getTeamColorClass } from '@/lib/team-colors'
 import { useIsSystemAdmin } from '@/hooks/use-is-system-admin'
+import Link from 'next/link'
 
 interface PlayerStats {
   matchesPlayed: number
@@ -72,6 +74,7 @@ interface AvailabilityData {
     last_resort: number
     maybe: number
     unavailable: number
+    notSet: number
     total: number 
   }>
 }
@@ -79,7 +82,11 @@ interface AvailabilityData {
 export default function AvailabilityPage() {
   const params = useParams()
   const router = useRouter()
-  const teamId = params.id as string
+  // Handle async params in Next.js 15 - useParams() returns a Promise in some contexts
+  const resolvedParams = params && typeof params === 'object' && 'then' in params 
+    ? use(params as Promise<{ id: string }>) 
+    : (params as { id: string })
+  const teamId = resolvedParams.id
   const [data, setData] = useState<AvailabilityData>({
     players: [],
     matches: [],
@@ -94,6 +101,7 @@ export default function AvailabilityPage() {
   const [teamName, setTeamName] = useState<string>('')
   const [teamColor, setTeamColor] = useState<string | null>(null)
   const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(['match', 'practice', 'warmup', 'other']) // Default to all
+  const [hidePastEvents, setHidePastEvents] = useState(false)
   const [openPopovers, setOpenPopovers] = useState<Record<string, boolean>>({})
   const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, 'available' | 'unavailable' | 'maybe' | 'last_resort' | 'clear'>>>({})
   const [bulkAvailabilityDialog, setBulkAvailabilityDialog] = useState<{
@@ -129,16 +137,46 @@ export default function AvailabilityPage() {
     
     if (!user) return
 
-    // Get teams where user is captain or co-captain
+    // Get ALL teams the user is on (as roster member, captain, or co-captain)
+    const { data: rosterMembers } = await supabase
+      .from('roster_members')
+      .select('team_id, teams(id, name)')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+
+    const rosterTeamIds = new Set<string>()
+    const allTeams: Array<{ id: string; name: string }> = []
+
+    // Add teams from roster membership
+    if (rosterMembers) {
+      rosterMembers.forEach(rm => {
+        const team = Array.isArray(rm.teams) ? rm.teams[0] : rm.teams
+        if (team && !rosterTeamIds.has(team.id)) {
+          rosterTeamIds.add(team.id)
+          allTeams.push({ id: team.id, name: team.name })
+        }
+      })
+    }
+
+    // Get teams where user is captain or co-captain (may not be on roster)
     const { data: captainTeams } = await supabase
       .from('teams')
       .select('id, name')
       .or(`captain_id.eq.${user.id},co_captain_id.eq.${user.id}`)
       .order('name')
 
+    // Add captain teams that aren't already in the list
     if (captainTeams) {
-      setAvailableTeams(captainTeams)
+      captainTeams.forEach(team => {
+        if (!rosterTeamIds.has(team.id)) {
+          allTeams.push(team)
+        }
+      })
     }
+
+    // Sort by name
+    allTeams.sort((a, b) => a.name.localeCompare(b.name))
+    setAvailableTeams(allTeams)
   }
 
   useEffect(() => {
@@ -147,10 +185,32 @@ export default function AvailabilityPage() {
   }, [])
 
   useEffect(() => {
+    // Save current team to localStorage when teamId changes
+    if (teamId) {
+      localStorage.setItem('lastViewedAvailabilityTeamId', teamId)
+      // Update selectedTeamId to match teamId from URL
+      if (selectedTeamId !== teamId) {
+        setSelectedTeamId(teamId)
+      }
+      // Reload availability data when teamId changes (this will re-check captain status)
+      loadAvailabilityData(teamId)
+    }
+  }, [teamId])
+
+  useEffect(() => {
     if (selectedTeamId) {
+      // Save selected team to localStorage
+      localStorage.setItem('lastViewedAvailabilityTeamId', selectedTeamId)
+      
+      // If team changed, navigate to that team's availability page
+      if (selectedTeamId !== teamId) {
+        router.push(`/teams/${selectedTeamId}/availability`)
+        return
+      }
+      
       loadAvailabilityData(selectedTeamId)
     }
-  }, [selectedTeamId])
+  }, [selectedTeamId, teamId, router])
 
   async function loadAvailabilityData(targetTeamId: string) {
     const supabase = createClient()
@@ -159,12 +219,22 @@ export default function AvailabilityPage() {
     // Get current user and check if captain, also load team configuration
     const { data: { user } } = await supabase.auth.getUser()
     
+    if (!user) {
+      setLoading(false)
+      return
+    }
+    
     // Load team configuration and name
     const { data: teamData } = await supabase
       .from('teams')
       .select('name, captain_id, co_captain_id, total_lines, line_match_types, color')
       .eq('id', targetTeamId)
       .single()
+    
+    if (!teamData) {
+      setLoading(false)
+      return
+    }
     
     if (teamData?.name) {
       setTeamName(teamData.name)
@@ -176,19 +246,64 @@ export default function AvailabilityPage() {
     let teamTotalLines = 3 // Default to 3 courts
     let teamLineMatchTypes: string[] = []
     
-    if (!user) {
-      setIsCaptain(false)
-    } else if (teamData) {
-      const isUserCaptain = teamData.captain_id === user.id || teamData.co_captain_id === user.id
-      setIsCaptain(isUserCaptain)
-      
-      // Get team configuration for calculating players needed
-      teamTotalLines = teamData.total_lines || 3
-      if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
-        teamLineMatchTypes = teamData.line_match_types
-      }
+    // Check if user is captain or co-captain
+    // Use String() to ensure type consistency in comparison
+    const userId = String(user.id)
+    const captainId = teamData.captain_id ? String(teamData.captain_id) : null
+    const coCaptainId = teamData.co_captain_id ? String(teamData.co_captain_id) : null
+    const isUserCaptain = (captainId === userId) || (coCaptainId === userId)
+    
+    console.log('Captain check:', {
+      userId,
+      captainId,
+      coCaptainId,
+      isCaptain: isUserCaptain,
+      captainMatch: captainId === userId,
+      coCaptainMatch: coCaptainId === userId,
+      teamId: targetTeamId,
+      teamName: teamData.name
+    })
+    
+    // Set captain state - this is critical for enabling editing
+    setIsCaptain(isUserCaptain)
+    console.log('Set isCaptain state to:', isUserCaptain)
+    
+    // Log state update for debugging
+    if (isUserCaptain) {
+      console.log('✅ User is captain/co-captain - editing should be enabled')
     } else {
-      setIsCaptain(false)
+      console.log('❌ User is NOT captain/co-captain - editing will be disabled')
+      console.log('   If this is wrong, check:')
+      console.log('   - Is user.id correct?', userId)
+      console.log('   - Is captain_id correct?', captainId)
+      console.log('   - Is co_captain_id correct?', coCaptainId)
+    }
+    
+    // Verify user has access: must be captain, co-captain, or a roster member
+    if (!isUserCaptain) {
+      // Check if user is a roster member
+      const { data: rosterMember } = await supabase
+        .from('roster_members')
+        .select('id')
+        .eq('team_id', targetTeamId)
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .maybeSingle()
+      
+      if (!rosterMember) {
+        // User is not a captain, co-captain, or roster member - no access
+        setLoading(false)
+        return
+      }
+    }
+    
+    // Note: RLS policies should allow team members (including captains) to view all team availability
+    // If availability is not showing, check RLS policies on the availability table
+    
+    // Get team configuration for calculating players needed
+    teamTotalLines = teamData.total_lines || 3
+    if (teamData.line_match_types && Array.isArray(teamData.line_match_types)) {
+      teamLineMatchTypes = teamData.line_match_types
     }
 
     // Load roster
@@ -281,11 +396,95 @@ export default function AvailabilityPage() {
     })
 
     // Load availability for all player/match and player/event combinations
-    const { data: availabilityData } = await supabase
-      .from('availability')
-      .select('*')
-      .in('roster_member_id', playerIds)
-      .or(`match_id.in.(${matchIds.join(',')}),event_id.in.(${eventIds.join(',')})`)
+    // This should load ALL availability for ALL roster members - RLS policies should allow team members to see all team availability
+    // For co-captains, RLS policy should allow viewing even if they're not roster members
+    let availabilityData: any[] | null = null
+    let availabilityError: any = null
+    
+    // Try loading availability - for captains/co-captains, RLS should allow viewing all team availability
+    // For regular players, they can only see availability for their team's matches/events
+    if (matchIds.length > 0 || eventIds.length > 0) {
+      let availabilityQuery = supabase
+        .from('availability')
+        .select('*')
+      
+      // Filter by roster members if we have player IDs
+      if (playerIds.length > 0) {
+        availabilityQuery = availabilityQuery.in('roster_member_id', playerIds)
+      }
+      
+      // Build the OR clause for matches and events
+      if (matchIds.length > 0 && eventIds.length > 0) {
+        availabilityQuery = availabilityQuery.or(`match_id.in.(${matchIds.join(',')}),event_id.in.(${eventIds.join(',')})`)
+      } else if (matchIds.length > 0) {
+        availabilityQuery = availabilityQuery.in('match_id', matchIds)
+      } else if (eventIds.length > 0) {
+        availabilityQuery = availabilityQuery.in('event_id', eventIds)
+      }
+      
+      const result = await availabilityQuery
+      availabilityData = result.data
+      availabilityError = result.error
+      
+      // If query failed and user is captain/co-captain, try a simpler query that relies on RLS
+      if (availabilityError && isUserCaptain) {
+        console.warn('Initial availability query failed for captain/co-captain, trying fallback query...')
+        let fallbackQuery = supabase
+          .from('availability')
+          .select('*')
+        
+        // For captains/co-captains, RLS should allow viewing all team availability
+        // So we can query by match/event IDs and let RLS filter
+        if (matchIds.length > 0 && eventIds.length > 0) {
+          fallbackQuery = fallbackQuery.or(`match_id.in.(${matchIds.join(',')}),event_id.in.(${eventIds.join(',')})`)
+        } else if (matchIds.length > 0) {
+          fallbackQuery = fallbackQuery.in('match_id', matchIds)
+        } else if (eventIds.length > 0) {
+          fallbackQuery = fallbackQuery.in('event_id', eventIds)
+        }
+        
+        const fallbackResult = await fallbackQuery
+        if (!fallbackResult.error) {
+          // Filter to only roster members manually since we're bypassing that filter
+          availabilityData = fallbackResult.data?.filter((a: any) => playerIds.includes(a.roster_member_id)) || null
+          availabilityError = null
+          console.log('Fallback query succeeded, filtered to roster members')
+        } else {
+          availabilityError = fallbackResult.error
+        }
+      }
+    }
+    
+    if (availabilityError) {
+      console.error('Error loading availability:', availabilityError)
+      console.error('Error details:', {
+        message: availabilityError.message,
+        details: availabilityError.details,
+        hint: availabilityError.hint,
+        code: availabilityError.code,
+        isCaptain: isUserCaptain,
+        userId: user.id,
+        teamId: targetTeamId,
+        playerIdsCount: playerIds.length,
+        matchIdsCount: matchIds.length,
+        eventIdsCount: eventIds.length,
+      })
+      toast({
+        title: 'Warning',
+        description: `Some availability data may not be visible due to permissions. Error: ${availabilityError.message}`,
+        variant: 'default',
+      })
+    }
+    
+    console.log(`Loaded ${availabilityData?.length || 0} availability records for ${playerIds.length} players`, {
+      isCaptain: isUserCaptain,
+      userId: user.id,
+      teamId: targetTeamId,
+      playerIdsCount: playerIds.length,
+      matchIdsCount: matchIds.length,
+      eventIdsCount: eventIds.length,
+      hasAvailabilityData: !!availabilityData,
+    })
 
     // Build availability lookup (for both matches and events)
     const availability: Record<string, Record<string, Availability>> = {}
@@ -301,7 +500,7 @@ export default function AvailabilityPage() {
 
     // Calculate availability counts per match
     // Count how many players are available vs. how many are needed to fill the courts
-    const availabilityCounts: Record<string, { available: number; total: number }> = {}
+    const availabilityCounts: Record<string, { available: number; last_resort: number; maybe: number; unavailable: number; notSet: number; total: number }> = {}
     
     // Calculate players needed based on team configuration
     // For each line, determine if it's doubles (2 players) or singles (1 player)
@@ -323,6 +522,7 @@ export default function AvailabilityPage() {
       let lastResort = 0
       let maybe = 0
       let unavailable = 0
+      let notSet = 0
       
       // Count players by status
       playerIds.forEach(playerId => {
@@ -342,6 +542,9 @@ export default function AvailabilityPage() {
               unavailable++
               break
           }
+        } else {
+          // Player has not set availability
+          notSet++
         }
       })
       
@@ -357,14 +560,17 @@ export default function AvailabilityPage() {
         last_resort: lastResort,
         maybe,
         unavailable,
+        notSet,
         total: totalNeeded 
       }
     })
 
     // Calculate player stats (including availability count)
+    // Note: availabilityCount and totalMatches will be recalculated based on filters in the render
     const playersWithStats = players.map(player => {
       const stats = statsMap.get(player.id) || { matchesPlayed: 0, matchesWon: 0, matchesLost: 0 }
       const playerAvailabilities = availability[player.id] || {}
+      // Count all available statuses (will be filtered by displayed items in render)
       const availabilityCount = Object.values(playerAvailabilities).filter(a => a.status === 'available').length
       
       return {
@@ -396,7 +602,16 @@ export default function AvailabilityPage() {
     status: 'available' | 'unavailable' | 'maybe' | 'last_resort' | 'clear'
   ) {
     try {
+      console.log('🔄 updateAvailabilityLocal called:', {
+        isCaptain,
+        playerId,
+        itemId,
+        status,
+        isCaptainType: typeof isCaptain,
+        isCaptainValue: isCaptain
+      })
       if (!isCaptain) {
+        console.warn('❌ Permission denied - isCaptain is false/undefined')
         toast({
           title: 'Permission Denied',
           description: 'Only captains can set availability for other players',
@@ -404,6 +619,7 @@ export default function AvailabilityPage() {
         })
         return
       }
+      console.log('✅ Permission granted - proceeding with update')
 
       if (!playerId || !itemId) {
         console.error('Invalid playerId or itemId:', { playerId, itemId })
@@ -519,15 +735,27 @@ export default function AvailabilityPage() {
   }
 
   function getDisplayedItems(): CalendarItem[] {
+    const today = new Date().toISOString().split('T')[0]
+    
     return data.items.filter(item => {
+      // Filter by event type
+      let matchesType = false
       if (item.type === 'match') {
-        return selectedEventTypes.includes('match')
+        matchesType = selectedEventTypes.includes('match')
       } else {
         // For events, check the event_type field
         const eventType = item.event_type || 'other'
-        // Return true if this event type is selected, or if 'all' is selected
-        return selectedEventTypes.includes(eventType)
+        matchesType = selectedEventTypes.includes(eventType)
       }
+      
+      if (!matchesType) return false
+      
+      // Filter out past events if hidePastEvents is enabled
+      if (hidePastEvents && item.date < today) {
+        return false
+      }
+      
+      return true
     })
   }
 
@@ -1112,7 +1340,7 @@ export default function AvailabilityPage() {
       case 'unavailable':
         return 'Unavailable'
       case 'maybe':
-        return 'Maybe'
+        return 'Unsure'
       case 'last_resort':
         return 'Last Resort'
       default:
@@ -1152,26 +1380,35 @@ export default function AvailabilityPage() {
 
       <main className="flex-1 p-4 pt-2 overflow-x-hidden">
         <div className="flex items-center justify-between mb-2 gap-2">
-          <Button variant="ghost" onClick={() => router.back()} size="sm">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
-
-          {/* Team Selector for Captains */}
-          {isCaptain && availableTeams.length > 1 && (
-            <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Select team" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableTeams.map(team => (
-                  <SelectItem key={team.id} value={team.id}>
-                    {team.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => router.back()} size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+            
+            {/* Team Selector - Show for all users if they have multiple teams */}
+            {availableTeams.length > 1 && (
+              <Select value={selectedTeamId || teamId} onValueChange={setSelectedTeamId}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Select team" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableTeams.map(team => (
+                    <SelectItem key={team.id} value={team.id}>
+                      {team.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            
+            <Link href="/availability?view=bulk">
+              <Button variant="outline" size="sm" title="View bulk availability for all teams">
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Bulk Availability
+              </Button>
+            </Link>
+          </div>
 
           {/* Sysadmin Clear Grid Button */}
           {isSystemAdmin && (
@@ -1265,6 +1502,16 @@ export default function AvailabilityPage() {
                     {label}
                   </Button>
                 ))}
+              </div>
+              <div className="flex items-center gap-2 ml-4 pl-4 border-l">
+                <Checkbox
+                  id="hide-past-events"
+                  checked={hidePastEvents}
+                  onCheckedChange={(checked) => setHidePastEvents(checked === true)}
+                />
+                <Label htmlFor="hide-past-events" className="text-sm font-normal cursor-pointer">
+                  Hide past events
+                </Label>
               </div>
             </div>
           </CardContent>
@@ -1385,6 +1632,7 @@ export default function AvailabilityPage() {
                       last_resort: 0,
                       maybe: 0,
                       unavailable: 0,
+                      notSet: 0,
                       total: data.players.length 
                     }
                     
@@ -1393,6 +1641,7 @@ export default function AvailabilityPage() {
                     let lastResortCount = baseCount.last_resort
                     let maybeCount = baseCount.maybe
                     let unavailableCount = baseCount.unavailable
+                    let notSetCount = baseCount.notSet
                     
                     data.players.forEach(player => {
                       const pendingStatus = pendingChanges[player.id]?.[item.id]
@@ -1404,12 +1653,14 @@ export default function AvailabilityPage() {
                         else if (savedStatus === 'last_resort') lastResortCount--
                         else if (savedStatus === 'maybe') maybeCount--
                         else if (savedStatus === 'unavailable') unavailableCount--
+                        else if (!savedStatus) notSetCount-- // Was not set
                         
                         // Add new status to count (unless it's 'clear')
                         if (pendingStatus === 'available') availableCount++
                         else if (pendingStatus === 'last_resort') lastResortCount++
                         else if (pendingStatus === 'maybe') maybeCount++
                         else if (pendingStatus === 'unavailable') unavailableCount++
+                        else if (pendingStatus === 'clear') notSetCount++ // Clearing sets it to not set
                       }
                     })
                     
@@ -1468,6 +1719,9 @@ export default function AvailabilityPage() {
                             )}
                             {unavailableCount > 0 && (
                               <div className="text-red-600">Not Available: {unavailableCount}</div>
+                            )}
+                            {notSetCount > 0 && (
+                              <div className="text-gray-600">Not Set: {notSetCount}</div>
                             )}
                           </div>
                         </div>
@@ -1551,9 +1805,20 @@ export default function AvailabilityPage() {
                     {/* History column */}
                     <td className="p-2 text-center text-xs border-r">
                       <div className="space-y-0.5">
-                        <div>- Played {player.stats.matchesPlayed} of {getDisplayedItems().filter(i => i.type === 'match').length}</div>
-                        <div>- {player.stats.matchesWon} wins / {player.stats.matchesLost} loss</div>
-                        <div>- Avail {player.stats.availabilityCount} of {getDisplayedItems().length}</div>
+                        {(() => {
+                          // Calculate availability count based only on displayed (filtered) items
+                          const displayedItems = getDisplayedItems()
+                          const displayedItemIds = new Set(displayedItems.map(item => item.id))
+                          const playerAvailabilities = data.availability[player.id] || {}
+                          // Count only availability for displayed items that are 'available'
+                          const filteredAvailabilityCount = Object.entries(playerAvailabilities)
+                            .filter(([itemId]) => displayedItemIds.has(itemId))
+                            .filter(([, avail]) => avail.status === 'available').length
+                          
+                          return (
+                            <div>- Avail {filteredAvailabilityCount} of {displayedItems.length}</div>
+                          )
+                        })()}
                       </div>
                     </td>
                     
@@ -1584,7 +1849,18 @@ export default function AvailabilityPage() {
                               <XIcon className="h-3 w-3" />
                             </Button>
                           )}
-                          {isCaptain ? (
+                          {(() => {
+                            // Debug: Log captain status (only once per render cycle)
+                            if (player.id === data.players[0]?.id && item.id === getDisplayedItems()[0]?.id) {
+                              console.log('🔍 Rendering first cell:', {
+                                isCaptain,
+                                isCaptainType: typeof isCaptain,
+                                isCaptainValue: isCaptain,
+                                editingEnabled: isCaptain ? '✅ YES' : '❌ NO'
+                              })
+                            }
+                            return isCaptain
+                          })() ? (
                             <Popover open={isOpen} onOpenChange={(open) => setOpenPopovers(prev => ({ ...prev, [popoverKey]: open }))}>
                               <PopoverTrigger asChild>
                                 <Button
@@ -1628,7 +1904,7 @@ export default function AvailabilityPage() {
                                     onClick={() => updateAvailabilityLocal(player.id, item.id, 'maybe')}
                                   >
                                     <HelpCircle className="h-4 w-4 mr-2 text-yellow-500" />
-                                    Maybe
+                                    Unsure
                                   </Button>
                                   <Button
                                     variant="ghost"
@@ -1655,6 +1931,7 @@ export default function AvailabilityPage() {
                               </PopoverContent>
                             </Popover>
                           ) : (
+                            // Read-only view for non-captains - they can see all availability but can't edit
                             <div className={cn(
                               'flex items-center justify-center h-8 w-full rounded border cursor-default',
                               getStatusButtonClass(status)

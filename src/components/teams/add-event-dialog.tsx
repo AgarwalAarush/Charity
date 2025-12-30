@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -655,17 +654,6 @@ export function AddEventDialog({
 
           {/* Recurring Event Options */}
           <div className="space-y-4 pt-4 border-t">
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="isRecurring"
-                checked={isRecurring}
-                onCheckedChange={(checked) => setIsRecurring(checked === true)}
-              />
-              <Label htmlFor="isRecurring" className="font-normal cursor-pointer">
-                This is a recurring event
-              </Label>
-            </div>
-
             <RecurrenceSelector
               isRecurring={isRecurring}
               onRecurringChange={setIsRecurring}

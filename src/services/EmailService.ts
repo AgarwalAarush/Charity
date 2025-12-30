@@ -1,5 +1,5 @@
 import { Match, Team, RosterMember, Lineup } from '@/types/database.types'
-import { formatDate, formatTime, getWarmupMessage } from '@/lib/utils'
+import { formatDate, formatTime, getWarmupMessage, formatCourtLabel } from '@/lib/utils'
 
 export interface EmailData {
   to: string
@@ -396,18 +396,20 @@ ${captainNames || team.name}`
       court_slot: number
       player1: RosterMember | null
       player2: RosterMember | null
-    }>
+    }>,
+    lineMatchTypes?: string[]
   ): string {
     return lineups
       .filter(l => l.player1) // Only need player1 to be present
       .sort((a, b) => a.court_slot - b.court_slot)
       .map(l => {
+        const courtLabel = formatCourtLabel(l.court_slot, undefined, lineMatchTypes)
         if (l.player2) {
           // Doubles match
-          return `Court ${l.court_slot}: ${l.player1!.full_name} & ${l.player2.full_name}`
+          return `${courtLabel}: ${l.player1!.full_name} & ${l.player2.full_name}`
         } else {
           // Singles match
-          return `Court ${l.court_slot}: ${l.player1!.full_name} (Singles)`
+          return `${courtLabel}: ${l.player1!.full_name} (Singles)`
         }
       })
       .join('\n')

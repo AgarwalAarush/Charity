@@ -84,9 +84,42 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .eq('is_active', true)
 
+    // Check if user should be assigned as captain for any teams
+    // This handles the case where a captain was intended but couldn't be set because they weren't a user yet
+    let captainAssignments = 0
+    if (linkedRosters && linkedRosters.length > 0) {
+      const teamIds = linkedRosters.map(rm => rm.team_id)
+      
+      // Find teams where this user is on the roster but captain_id is null
+      const { data: teamsWithoutCaptain } = await supabase
+        .from('teams')
+        .select('id, name, captain_id, co_captain_id')
+        .in('id', teamIds)
+        .is('captain_id', null)
+      
+      // Assign user as captain for teams with no captain
+      if (teamsWithoutCaptain && teamsWithoutCaptain.length > 0) {
+        const teamsToUpdate = teamsWithoutCaptain.map(t => t.id)
+        const { error: updateError } = await supabase
+          .from('teams')
+          .update({ captain_id: user.id })
+          .in('id', teamsToUpdate)
+        
+        if (!updateError) {
+          captainAssignments = teamsToUpdate.length
+          console.log(`Assigned user ${user.id} as captain for ${captainAssignments} team(s)`)
+        } else {
+          console.error('Error assigning captain:', updateError)
+        }
+      }
+    }
+
     const messages = []
     if (count > 0) {
       messages.push(`Successfully linked to ${count} team(s)`)
+    }
+    if (captainAssignments > 0) {
+      messages.push(`assigned as captain for ${captainAssignments} team(s)`)
     }
     if (linkedInvitations > 0) {
       messages.push(`${linkedInvitations} event invitation(s)`)
@@ -96,6 +129,7 @@ export async function POST(request: NextRequest) {
       success: true,
       linked: count,
       linkedInvitations: linkedInvitations,
+      captainAssignments: captainAssignments,
       teams: linkedRosters?.map(rm => ({
         roster_member_id: rm.id,
         team_id: rm.team_id,

@@ -1,16 +1,50 @@
-import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
+import { cookies } from 'next/headers'
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/home'
 
   if (code) {
-    const supabase = await createClient()
+    const cookieStore = await cookies()
+    
+    // Create response first so we can set cookies on it
+    const response = NextResponse.redirect(`${origin}${next}`)
+    
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll()
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options)
+              // Also set on the response to ensure cookies are included in redirect
+              response.cookies.set(name, value, options)
+            })
+          },
+        },
+      }
+    )
+    
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
     
-    if (!error && data.user) {
+    if (error) {
+      console.error('Error exchanging code for session:', error)
+      return NextResponse.redirect(`${origin}/auth/login?error=${encodeURIComponent(error.message || 'Could not authenticate user')}`)
+    }
+    
+    if (!data.user) {
+      console.error('No user data after code exchange')
+      return NextResponse.redirect(`${origin}/auth/login?error=${encodeURIComponent('Authentication failed - no user data')}`)
+    }
+    
+    if (data.user) {
       // Ensure profile exists after email confirmation
       // At this point, the user is fully confirmed and exists in auth.users
       const { data: existingProfile, error: checkError } = await supabase
@@ -67,6 +101,46 @@ export async function GET(request: Request) {
 
         if (!functionError && linkedCount && linkedCount > 0) {
           console.log(`Linked ${linkedCount} roster member(s) to user ${data.user.id}`)
+          
+          // Check if user should be assigned as captain for any teams
+          // This handles the case where a captain was intended but couldn't be set because they weren't a user yet
+          try {
+            // Get teams where this user is now on the roster
+            const { data: linkedRosters } = await supabase
+              .from('roster_members')
+              .select('team_id')
+              .eq('user_id', data.user.id)
+              .eq('is_active', true)
+            
+            if (linkedRosters && linkedRosters.length > 0) {
+              const teamIds = linkedRosters.map(rm => rm.team_id)
+              
+              // Find teams where this user is on the roster but captain_id is null
+              const { data: teamsWithoutCaptain } = await supabase
+                .from('teams')
+                .select('id, name')
+                .in('id', teamIds)
+                .is('captain_id', null)
+              
+              // Assign user as captain for teams with no captain
+              if (teamsWithoutCaptain && teamsWithoutCaptain.length > 0) {
+                const teamsToUpdate = teamsWithoutCaptain.map(t => t.id)
+                const { error: updateError } = await supabase
+                  .from('teams')
+                  .update({ captain_id: data.user.id })
+                  .in('id', teamsToUpdate)
+                
+                if (!updateError) {
+                  console.log(`Assigned user ${data.user.id} as captain for ${teamsToUpdate.length} team(s)`)
+                } else {
+                  console.error('Error assigning captain in callback:', updateError)
+                }
+              }
+            }
+          } catch (captainError) {
+            // Don't fail auth if captain assignment fails - user can still log in
+            console.error('Error assigning captain in callback:', captainError)
+          }
         }
       } catch (linkError) {
         // Don't fail auth if linking fails - user can still log in
@@ -87,7 +161,8 @@ export async function GET(request: Request) {
         console.error('Error linking event invitations in callback:', invitationLinkError)
       }
 
-      return NextResponse.redirect(`${origin}${next}`)
+      // Return the response with cookies already set via setAll callback
+      return response
     }
   }
 

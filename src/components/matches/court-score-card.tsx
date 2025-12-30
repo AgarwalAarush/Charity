@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { formatCourtLabel } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -25,6 +26,7 @@ export function CourtScoreCard({
   lineupId,
   existingScores = [],
   onChange,
+  lineMatchTypes,
 }: CourtScoreCardProps) {
   // Initialize sets with existing scores or empty defaults
   const [set1Home, setSet1Home] = useState<string>(existingScores.find(s => s.set_number === 1)?.home_games?.toString() || '')
@@ -120,7 +122,9 @@ export function CourtScoreCard({
     return (
       <Card className={courtWon && set1Home && set1Away ? 'border-green-500' : ''}>
         <CardHeader>
-          <CardTitle className="text-base">Court {courtNumber}</CardTitle>
+          <CardTitle className="text-base">
+            {formatCourtLabel(courtNumber, undefined, lineMatchTypes)}
+          </CardTitle>
           <div className="text-sm text-muted-foreground">
             {player1Name} + {player2Name}
           </div>
