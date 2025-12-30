@@ -67,6 +67,46 @@ export async function GET(request: Request) {
 
         if (!functionError && linkedCount && linkedCount > 0) {
           console.log(`Linked ${linkedCount} roster member(s) to user ${data.user.id}`)
+          
+          // Check if user should be assigned as captain for any teams
+          // This handles the case where a captain was intended but couldn't be set because they weren't a user yet
+          try {
+            // Get teams where this user is now on the roster
+            const { data: linkedRosters } = await supabase
+              .from('roster_members')
+              .select('team_id')
+              .eq('user_id', data.user.id)
+              .eq('is_active', true)
+            
+            if (linkedRosters && linkedRosters.length > 0) {
+              const teamIds = linkedRosters.map(rm => rm.team_id)
+              
+              // Find teams where this user is on the roster but captain_id is null
+              const { data: teamsWithoutCaptain } = await supabase
+                .from('teams')
+                .select('id, name')
+                .in('id', teamIds)
+                .is('captain_id', null)
+              
+              // Assign user as captain for teams with no captain
+              if (teamsWithoutCaptain && teamsWithoutCaptain.length > 0) {
+                const teamsToUpdate = teamsWithoutCaptain.map(t => t.id)
+                const { error: updateError } = await supabase
+                  .from('teams')
+                  .update({ captain_id: data.user.id })
+                  .in('id', teamsToUpdate)
+                
+                if (!updateError) {
+                  console.log(`Assigned user ${data.user.id} as captain for ${teamsToUpdate.length} team(s)`)
+                } else {
+                  console.error('Error assigning captain in callback:', updateError)
+                }
+              }
+            }
+          } catch (captainError) {
+            // Don't fail auth if captain assignment fails - user can still log in
+            console.error('Error assigning captain in callback:', captainError)
+          }
         }
       } catch (linkError) {
         // Don't fail auth if linking fails - user can still log in

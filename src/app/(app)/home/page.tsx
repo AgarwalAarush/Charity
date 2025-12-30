@@ -843,12 +843,6 @@ export default function HomePage() {
       return a.time.localeCompare(b.time)
     })
     setAllItems(combined)
-
-    // Load team-specific data if a team is selected
-    if (selectedTeamId || uniqueTeams.length > 0) {
-      const teamToLoad = selectedTeamId || uniqueTeams[0].id
-      await loadTeamData(teamToLoad)
-    }
     
     // Load lifetime statistics
     await loadLifetimeStats()
@@ -862,6 +856,9 @@ export default function HomePage() {
   async function loadTeamData(teamId: string) {
     const supabase = createClient()
     
+    // Reset captain IDs first
+    setTeamCaptainIds(null)
+    
     // Load team to get captain info
     const { data: teamData } = await supabase
       .from('teams')
@@ -874,6 +871,8 @@ export default function HomePage() {
         captain_id: teamData.captain_id,
         co_captain_id: teamData.co_captain_id
       })
+    } else {
+      setTeamCaptainIds(null)
     }
     
     // Load roster
@@ -1758,27 +1757,58 @@ export default function HomePage() {
                 <Card>
                   <CardContent className="p-3">
                     <div className="space-y-2">
-                      {teamRoster.map((member) => {
-                        const isCaptain = teamCaptainIds && member.user_id && (
-                          member.user_id === teamCaptainIds.captain_id || 
-                          member.user_id === teamCaptainIds.co_captain_id
-                        )
-                        return (
-                          <div key={member.id} className="flex items-center gap-2 text-sm">
-                            <Avatar className="h-8 w-8">
-                              <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                                {member.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="truncate flex-1">{member.full_name}</span>
-                            {isCaptain && (
-                              <Badge variant="secondary" className="text-xs shrink-0">
-                                Captain
-                              </Badge>
-                            )}
-                          </div>
-                        )
-                      })}
+                      {(() => {
+                        // Sort roster: captains first, then others
+                        const sortedRoster = [...teamRoster].sort((a, b) => {
+                          // Helper function to check if member is captain
+                          const isMemberCaptain = (member: any) => {
+                            const memberUserId = member.user_id ? String(member.user_id).trim() : null
+                            const captainId = teamCaptainIds?.captain_id ? String(teamCaptainIds.captain_id).trim() : null
+                            const coCaptainId = teamCaptainIds?.co_captain_id ? String(teamCaptainIds.co_captain_id).trim() : null
+                            
+                            // Check by user_id only (assumes all captains are app users)
+                            return (memberUserId && captainId && memberUserId === captainId) ||
+                                   (memberUserId && coCaptainId && memberUserId === coCaptainId)
+                          }
+                          
+                          const aIsCaptain = isMemberCaptain(a)
+                          const bIsCaptain = isMemberCaptain(b)
+                          
+                          // Captains come first
+                          if (aIsCaptain && !bIsCaptain) return -1
+                          if (!aIsCaptain && bIsCaptain) return 1
+                          
+                          // Within same group, sort alphabetically
+                          return a.full_name.localeCompare(b.full_name)
+                        })
+                        
+                        return sortedRoster.map((member) => {
+                        // Convert to strings to ensure type consistency in comparison
+                        const memberUserId = member.user_id ? String(member.user_id).trim() : null
+                        const captainId = teamCaptainIds?.captain_id ? String(teamCaptainIds.captain_id).trim() : null
+                        const coCaptainId = teamCaptainIds?.co_captain_id ? String(teamCaptainIds.co_captain_id).trim() : null
+                        
+                        // Check if this member is a captain or co-captain (assumes all captains are app users)
+                        const isCaptain = (memberUserId && captainId && memberUserId === captainId) ||
+                                         (memberUserId && coCaptainId && memberUserId === coCaptainId)
+                          
+                          return (
+                            <div key={member.id} className="flex items-center gap-2 text-sm">
+                              <Avatar className="h-8 w-8">
+                                <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                                  {member.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="truncate flex-1">{member.full_name}</span>
+                              {isCaptain && (
+                                <Badge variant="secondary" className="text-xs shrink-0">
+                                  Captain
+                                </Badge>
+                              )}
+                            </div>
+                          )
+                        })
+                      })()}
                     </div>
                   </CardContent>
                 </Card>

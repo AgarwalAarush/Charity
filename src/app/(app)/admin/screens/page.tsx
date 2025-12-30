@@ -70,7 +70,7 @@ const screenGroups: ScreenGroup[] = [
   {
     title: 'Activities',
     screens: [
-      { name: 'All Activities', path: '/activities', description: 'List of personal activities' },
+      { name: 'All Activities', path: '/calendar?view=personal', description: 'List of personal activities (redirects to Calendar)' },
       { name: 'Activity Detail', path: '/activities/[eventId]', description: 'Personal activity details' },
     ],
   },

@@ -91,6 +91,9 @@ export default function SignUpPage() {
           if (linkData.linked > 0) {
             messages.push(`added to ${linkData.linked} team(s)`)
           }
+          if (linkData.captainAssignments > 0) {
+            messages.push(`assigned as captain for ${linkData.captainAssignments} team(s)`)
+          }
           if (linkData.linkedInvitations > 0) {
             messages.push(`${linkData.linkedInvitations} event invitation(s)`)
           }

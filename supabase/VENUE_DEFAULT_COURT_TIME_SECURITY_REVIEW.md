@@ -62,3 +62,4 @@ This migration adds a `default_court_time` column to the `venues` table, allowin
 The migration is **secure, performant, and scalable** for production use. All best practices have been followed.
 
 
+

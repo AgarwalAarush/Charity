@@ -1,54 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { Header } from '@/components/layout/header'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { createClient } from '@/lib/supabase/client'
-import { PersonalEvent, EventInvitation, EventAttendee } from '@/types/database.types'
-import { formatDate, formatTime } from '@/lib/utils'
-import { getEffectiveUserId, getEffectiveUserEmail } from '@/lib/impersonation'
-import { Plus, Calendar, ArrowLeft, Users, Clock, ChevronRight } from 'lucide-react'
-import { AddPersonalEventDialog } from '@/components/activities/add-personal-event-dialog'
-import { ActivityTypeBadge } from '@/components/activities/activity-type-badge'
-import { ActivityType } from '@/lib/calendar-utils'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-
-interface ActivityWithDetails extends PersonalEvent {
-  invitation?: EventInvitation
-  attendee?: EventAttendee
-  attendeeCount?: number
-  attendees?: Array<{
-    id: string
-    name?: string | null
-    email: string
-    user_id?: string | null
-    profiles?: { full_name?: string | null } | null
-  }>
-  isCreator?: boolean
-}
 
 export default function ActivitiesPage() {
   const router = useRouter()
-  const [createdActivities, setCreatedActivities] = useState<ActivityWithDetails[]>([])
-  const [invitedActivities, setInvitedActivities] = useState<ActivityWithDetails[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showCreateDialog, setShowCreateDialog] = useState(false)
-  const [filterType, setFilterType] = useState<string>('all')
-  const [filterStatus, setFilterStatus] = useState<string>('upcoming')
 
   useEffect(() => {
-    loadActivities()
-  }, [])
+    // Redirect to calendar with personal activities view
+    router.replace('/calendar?view=personal')
+  }, [router])
+
+  return null
 
   async function loadActivities() {
     try {
